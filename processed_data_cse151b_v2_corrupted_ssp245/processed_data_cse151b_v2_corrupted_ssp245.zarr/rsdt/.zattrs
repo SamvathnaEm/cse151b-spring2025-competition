@@ -1,0 +1,29 @@
+{
+    "_ARRAY_DIMENSIONS": [
+        "ssp",
+        "time",
+        "y",
+        "x"
+    ],
+    "cell_measures": "area: areacella",
+    "cell_methods": "area: time: mean",
+    "comment": "SOLIN",
+    "coordinates": "time lat lon",
+    "description": "at the top of the atmosphere",
+    "frequency": "mon",
+    "id": "rsdt",
+    "long_name": "TOA Incident Shortwave Radiation",
+    "mipTable": "Amon",
+    "out_name": "rsdt",
+    "positive": "down",
+    "prov": "Amon ((isd.003))",
+    "realm": "atmos",
+    "standard_name": "toa_incoming_shortwave_flux",
+    "time": "time",
+    "time_label": "time-mean",
+    "time_title": "Temporal mean",
+    "title": "TOA Incident Shortwave Radiation",
+    "type": "real",
+    "units": "W/m\u00b2",
+    "variable_id": "rsdt"
+}

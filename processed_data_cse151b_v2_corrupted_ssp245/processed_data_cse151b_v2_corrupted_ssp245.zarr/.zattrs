@@ -1,0 +1,6 @@
+{
+    "original_member_ids": "['r10i1p1f1', 'r11i1p1f1', 'r4i1p1f1']",
+    "precipitation_units": "mm/day (converted from kg m-2 s-1)",
+    "source": "CMIP6 data processed for CSE151B",
+    "ssp": "ssp126"
+}

@@ -1,0 +1,29 @@
+{
+    "_ARRAY_DIMENSIONS": [
+        "ssp",
+        "time",
+        "member_id",
+        "y",
+        "x"
+    ],
+    "cell_measures": "area: areacella",
+    "cell_methods": "area: time: mean",
+    "comment": "TREFHT",
+    "coordinates": "lat lon",
+    "description": "near-surface (usually, 2 meter) air temperature",
+    "frequency": "day",
+    "id": "tas",
+    "long_name": "Near-Surface Air Temperature",
+    "mipTable": "day",
+    "out_name": "tas",
+    "prov": "day ((isd.003))",
+    "realm": "atmos",
+    "standard_name": "air_temperature",
+    "time": "time",
+    "time_label": "time-mean",
+    "time_title": "Temporal mean",
+    "title": "Near-Surface Air Temperature",
+    "type": "real",
+    "units": "K",
+    "variable_id": "tas"
+}

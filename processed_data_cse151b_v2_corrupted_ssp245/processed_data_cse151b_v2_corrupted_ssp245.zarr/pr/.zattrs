@@ -1,0 +1,13 @@
+{
+    "_ARRAY_DIMENSIONS": [
+        "ssp",
+        "time",
+        "member_id",
+        "y",
+        "x"
+    ],
+    "conversion_applied": "multiplied by 86400 to convert from kg m-2 s-1 to mm/day",
+    "coordinates": "lat lon",
+    "original_units": "kg/m\u00b2/s",
+    "units": "mm/day"
+}
