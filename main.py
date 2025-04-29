@@ -161,7 +161,7 @@ class ClimateEmulationDataModule(LightningDataModule):
         test_ssp: str,
         target_member_id: int,
         test_months: int = 360,
-        batch_size: int = 32,
+        batch_size: int = 8,
         eval_batch_size: int = None,
         num_workers: int = 0,
         seed: int = 42,
@@ -477,8 +477,14 @@ class ClimateEmulationModule(pl.LightningModule):
         all_preds_np = np.concatenate([pred for pred, _ in self.validation_step_outputs], axis=0)
         all_trues_np = np.concatenate([true for _, true in self.validation_step_outputs], axis=0)
 
+        # CHATGPT: 2. Flatten batch & var into one axis → (B*C, T, H, W)
+        B, T, C, H, W = all_preds_np.shape
+        preds_flat = all_preds_np.transpose(0, 2, 1, 3, 4).reshape(B*C, T, H, W)
+        trues_flat = all_trues_np.transpose(0, 2, 1, 3, 4).reshape(B*C, T, H, W)
+
         # Use the helper method to evaluate predictions
-        self._evaluate_predictions(all_preds_np, all_trues_np, is_test=False)
+        #self._evaluate_predictions(all_preds_np, all_trues_np, is_test=False)
+        self._evaluate_predictions(preds_flat, trues_flat, is_test=False)
 
         self.validation_step_outputs.clear()  # Clear the outputs list for next epoch
 
@@ -495,12 +501,26 @@ class ClimateEmulationModule(pl.LightningModule):
         all_preds_denorm = np.concatenate([pred for pred, true in self.test_step_outputs], axis=0)
         all_trues_denorm = np.concatenate([true for pred, true in self.test_step_outputs], axis=0)
 
+        # CHATGPT: 2. Flatten batch & var into one axis → (B*C, T, H, W)
+        B, T, C, H, W = all_preds_denorm.shape
+        preds_flat = all_preds_denorm.transpose(0, 2, 1, 3, 4).reshape(B*C, T, H, W)
+        trues_flat = all_trues_denorm.transpose(0, 2, 1, 3, 4).reshape(B*C, T, H, W)
+
         # Use the helper method to evaluate predictions
-        self._evaluate_predictions(all_preds_denorm, all_trues_denorm, is_test=True)
+        #self._evaluate_predictions(all_preds_denorm, all_trues_denorm, is_test=True)
+        self._evaluate_predictions(preds_flat, trues_flat, is_test=True)
 
         # Save predictions for Kaggle submission. This is the file that should be uploaded to Kaggle.
+        #log.info("Saving Kaggle submission...")
+        #self._save_kaggle_submission(all_preds_denorm)
+
+        #CHATGPT VERSION
+        # Prepare and save Kaggle submission (drop the batch axis so it's 4-D: T×C×H×W)
+        # (We expect B==1 for the full-test sequence)
+        preds_to_submit = all_preds_denorm.reshape(B * T, C, H, W)
+
         log.info("Saving Kaggle submission...")
-        self._save_kaggle_submission(all_preds_denorm)
+        self._save_kaggle_submission(preds_to_submit)
 
         self.test_step_outputs.clear()  # Clear the outputs list
 

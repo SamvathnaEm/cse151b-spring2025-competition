@@ -118,42 +118,96 @@ class SimpleCNN(nn.Module):
 
         return x
 
+#CHATGPT ADDITION
+class ConvLSTMCell(nn.Module):
+    def __init__(self, input_dim, hidden_dim, kernel_size, bias=True):
+        super().__init__()
+        padding = kernel_size // 2
+        # we pack all four gates into one conv for efficiency
+        self.conv = nn.Conv2d(
+            in_channels=input_dim + hidden_dim,
+            out_channels=4 * hidden_dim,
+            kernel_size=kernel_size,
+            padding=padding,
+            bias=bias
+        )
+        self.hidden_dim = hidden_dim
+
+    def forward(self, x, h, c):
+        # x:      (B, input_dim,  H,  W)
+        # h, c:   (B, hidden_dim, H,  W)
+        combined = torch.cat([x, h], dim=1)       # (B, input+hidden, H, W)
+        conv_out = self.conv(combined)            # (B, 4*hidden, H, W)
+        i, f, o, g = torch.chunk(conv_out, 4, dim=1)
+        i = torch.sigmoid(i)
+        f = torch.sigmoid(f)
+        o = torch.sigmoid(o)
+        g = torch.tanh(g)
+        c_next = f * c + i * g
+        h_next = o * torch.tanh(c_next)
+        return h_next, c_next
+
+
 class CNN_LSTM(nn.Module):
     def __init__(
-        self, 
-        n_input_channels, 
-        n_output_channels, 
-        cnn_kwargs, 
-        cnn_feature_dim=128,
-        lstm_hidden_dim=256,
-        lstm_layers=1
+        self,
+        n_input_channels: int,
+        n_output_channels: int,
+        cnn_kwargs: dict,
+        cnn_feature_dim: int = 128,
+        lstm_hidden_dim: int = 256,
+        lstm_layers: int = 1,
     ):
         super().__init__()
 
         self.cnn = SimpleCNN(n_input_channels=n_input_channels, n_output_channels=cnn_feature_dim, **cnn_kwargs)
+        
 
-        self.pool = nn.AdaptiveAvgPool2d((1,1))
+        # 2) One ConvLSTMCell per layer (we’ll stack them in a list for >1 layer)
+        self.cell_list = nn.ModuleList([
+            ConvLSTMCell(
+                input_dim = cnn_feature_dim if layer_idx == 0 else lstm_hidden_dim,
+                hidden_dim = lstm_hidden_dim,
+                kernel_size = cnn_kwargs.get("kernel_size", 3)
+            )
+            for layer_idx in range(lstm_layers)
+        ])
 
-        self.lstm = nn.LSTM(
-            input_size=cnn_feature_dim,
-            hidden_size=lstm_hidden_dim,
-            num_layers=lstm_layers,
-            batch_first=True
+        # 3) Map from hidden state → final climate variable maps
+        self.final_conv = nn.Conv2d(
+            in_channels=lstm_hidden_dim,
+            out_channels=n_output_channels,
+            kernel_size=1
         )
 
-        self.finalLayer = nn.Linear(lstm_hidden_dim, n_output_channels)
-
+    #Heavily GPT altered
     def forward(self, x):
-        BATCH, TIME, CHANNEL, HEIGHT, WIDTH = x.shape
-        features = []
-        for t in range(TIME):
-            cnn_out = self.cnn(x[:, t])
-            pooled = self.pool(cnn_out)
-            pooled = pooled.squeeze(-1).squeeze(-1)
-            features.append(pooled)
+        """
+        x: (B, T, C_in, H, W)
+        returns: (B, T, C_out, H, W)
+        """
+        B, T, C, H, W = x.shape
+        device = x.device
 
-        sequence = torch.stack(features, dim=1)
+        # Will hold h & c for each layer
+        h = [torch.zeros(B, cell.hidden_dim, H, W, device=device) for cell in self.cell_list]
+        c = [torch.zeros_like(h_l)                                    for h_l in h]
 
-        lstm_out, _ = self.lstm(sequence)
+        outputs = []
+        for t in range(T):
+            # 1) Extract spatial features at time t
+            feat = self.cnn(x[:, t])              # (B, cnn_feature_dim, H, W)
+            # optionally wrap in checkpoint to save memory:
+            # feat = checkpoint(self.cnn, x[:, t])
 
-        return self.finalLayer(lstm_out)
+            # 2) Pass through each ConvLSTM layer
+            for layer_idx, cell in enumerate(self.cell_list):
+                h[layer_idx], c[layer_idx] = cell(feat, h[layer_idx], c[layer_idx])
+                feat = h[layer_idx]               # feed this layer’s h to the next
+
+            # 3) Project to final output map
+            out_map = self.final_conv(h[-1])     # (B, n_output_channels, H, W)
+            outputs.append(out_map)
+
+        # stack on the time axis → (B, T, C_out, H, W)
+        return torch.stack(outputs, dim=1)

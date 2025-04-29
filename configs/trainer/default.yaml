@@ -1,11 +1,14 @@
 # @package _global_.trainer
 
-max_epochs: 20  # Specific number of epochs
+max_epochs: 1  # Specific number of epochs
 accelerator: auto  # Will be auto-detected in code
 devices: auto  # Will be auto-detected in code
 deterministic: true
 num_sanity_val_steps: 0
-precision: 32
+precision: 16
+
+#enable_gradient_checkpointing: true
+gradient_clip_val: 1.0
 
 # Define callbacks as a list for Hydra instantiation
 callbacks:
