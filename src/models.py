@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 
@@ -5,10 +6,29 @@ from omegaconf import DictConfig
 def get_model(cfg: DictConfig):
     # Create model based on configuration
     model_kwargs = {k: v for k, v in cfg.model.items() if k != "type"}
-    model_kwargs["n_input_channels"] = len(cfg.data.input_vars)
-    model_kwargs["n_output_channels"] = len(cfg.data.output_vars)
     if cfg.model.type == "simple_cnn":
-        model = SimpleCNN(**model_kwargs)
+        model = SimpleCNN(
+            n_input_channels=len(cfg.data.input_vars),
+            n_output_channels=len(cfg.data.output_vars),
+            **model_kwargs
+        )
+
+    elif cfg.model.type == "cnn_lstm":
+        # Split out CNN-related kwargs
+        cnn_kwargs = {
+            "kernel_size": cfg.model.kernel_size,
+            "init_dim": cfg.model.init_dim,
+            "depth": cfg.model.depth,
+            "dropout_rate": cfg.model.dropout_rate,
+        }
+        model = CNN_LSTM(
+            n_input_channels=len(cfg.data.input_vars),
+            n_output_channels=len(cfg.data.output_vars),
+            cnn_kwargs=cnn_kwargs,
+            cnn_feature_dim=cfg.model.cnn_feature_dim,
+            lstm_hidden_dim=cfg.model.lstm_hidden_dim,
+            lstm_layers=cfg.model.lstm_layers,
+        )
     else:
         raise ValueError(f"Unknown model type: {cfg.model.type}")
     return model
@@ -97,3 +117,43 @@ class SimpleCNN(nn.Module):
         x = self.final(x)
 
         return x
+
+class CNN_LSTM(nn.Module):
+    def __init__(
+        self, 
+        n_input_channels, 
+        n_output_channels, 
+        cnn_kwargs, 
+        cnn_feature_dim=128,
+        lstm_hidden_dim=256,
+        lstm_layers=1
+    ):
+        super().__init__()
+
+        self.cnn = SimpleCNN(n_input_channels=n_input_channels, n_output_channels=cnn_feature_dim, **cnn_kwargs)
+
+        self.pool = nn.AdaptiveAvgPool2d((1,1))
+
+        self.lstm = nn.LSTM(
+            input_size=cnn_feature_dim,
+            hidden_size=lstm_hidden_dim,
+            num_layers=lstm_layers,
+            batch_first=True
+        )
+
+        self.finalLayer = nn.Linear(lstm_hidden_dim, n_output_channels)
+
+    def forward(self, x):
+        BATCH, TIME, CHANNEL, HEIGHT, WIDTH = x.shape
+        features = []
+        for t in range(TIME):
+            cnn_out = self.cnn(x[:, t])
+            pooled = self.pool(cnn_out)
+            pooled = pooled.squeeze(-1).squeeze(-1)
+            features.append(pooled)
+
+        sequence = torch.stack(features, dim=1)
+
+        lstm_out, _ = self.lstm(sequence)
+
+        return self.finalLayer(lstm_out)

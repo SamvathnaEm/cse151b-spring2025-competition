@@ -2,7 +2,7 @@
 
 defaults:
   - data: default
-  - model: simple_cnn
+  - model: cnn_lstm
   - training: default
   - trainer: default
   - _self_

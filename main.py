@@ -43,6 +43,28 @@ log = get_logger(__name__)
 
 
 # Dataset to precompute all tensors during initialization
+class ClimateSequenceDataset(Dataset):
+    def __init__(self, input, output, sequence_len=12):
+        super().__init__()
+
+        inputs_np = input.compute()
+        outputs_np = output.compute()
+
+
+        self.inputs = torch.from_numpy(inputs_np).float()
+        self.outputs = torch.from_numpy(outputs_np).float()
+        self.sequence_len = sequence_len  
+        self.size = self.inputs.shape[0] - sequence_len + 1
+
+    def __len__(self):
+        return self.size
+
+    def __getitem__(self, idx):
+        x_seq = self.inputs[idx : idx + self.sequence_len]
+        y_seq = self.outputs[idx : idx + self.sequence_len]
+        return x_seq, y_seq       
+
+
 class ClimateDataset(Dataset):
     def __init__(self, inputs_norm_dask, outputs_dask, output_is_normalized=True):
         # Store dataset size
@@ -245,9 +267,12 @@ class ClimateEmulationDataModule(LightningDataModule):
             test_output_raw_dask = sliced_test_output_raw_dask  # Keep unnormed for evaluation
 
         # Create datasets
-        self.train_dataset = ClimateDataset(train_input_norm_dask, train_output_norm_dask, output_is_normalized=True)
-        self.val_dataset = ClimateDataset(val_input_norm_dask, val_output_norm_dask, output_is_normalized=True)
-        self.test_dataset = ClimateDataset(test_input_norm_dask, test_output_raw_dask, output_is_normalized=False)
+        self.train_dataset = ClimateSequenceDataset(train_input_norm_dask, train_output_norm_dask)
+        self.val_dataset = ClimateSequenceDataset(val_input_norm_dask, val_output_norm_dask)
+        self.test_dataset = ClimateSequenceDataset(test_input_norm_dask, test_output_raw_dask)
+        # self.train_dataset = ClimateDataset(train_input_norm_dask, train_output_norm_dask, output_is_normalized=True)
+        # self.val_dataset = ClimateDataset(val_input_norm_dask, val_output_norm_dask, output_is_normalized=True)
+        # self.test_dataset = ClimateDataset(test_input_norm_dask, test_output_raw_dask, output_is_normalized=False)
 
         # Log dataset sizes in a single message
         log.info(

@@ -1,0 +1,15 @@
+# @package _global_.model
+
+# Model type identifier
+type: cnn_lstm
+
+# Model architecture parameters
+cnn_feature_dim: 128
+lstm_hidden_dim: 256
+lstm_layers: 1
+kernel_size: 3       
+init_dim: 64         
+depth: 4             
+dropout_rate: 0.2
+
+
