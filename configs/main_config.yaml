@@ -11,9 +11,9 @@ defaults:
 seed: 42
 
 # Wandb logging, all arguments are only used if use_wandb is set to true
-use_wandb: false
+use_wandb: true
 wandb_project: "cse-151b-competition"
-wandb_entity: null
+wandb_entity: "saem-uc-san-diego"
 run_name: null
 
 # Path to a checkpoint to load. If set, will load this checkpoint and resume training (evaluation)
