@@ -139,10 +139,10 @@ class ConvLSTMCell(nn.Module):
         combined = torch.cat([x, h], dim=1)       # (B, input+hidden, H, W)
         conv_out = self.conv(combined)            # (B, 4*hidden, H, W)
         i, f, o, g = torch.chunk(conv_out, 4, dim=1)
-        i = torch.sigmoid(i)
+        i = torch.relu(i)
         f = torch.sigmoid(f)
-        o = torch.sigmoid(o)
-        g = torch.tanh(g)
+        o = torch.relu(o) #3 Sigmoids before
+        g = torch.relu(g) #tanh before
         c_next = f * c + i * g
         h_next = o * torch.tanh(c_next)
         return h_next, c_next
