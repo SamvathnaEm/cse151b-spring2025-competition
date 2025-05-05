@@ -14,7 +14,7 @@ seed: 42
 use_wandb: true
 wandb_project: "cse-151b-competition"
 wandb_entity: "saem-uc-san-diego"
-run_name: "LSTM_GPT_rsrrt_dropout-0.5"
+run_name: "LSTM_GPT_ssstt_dropout-0.5_GrokXavierInit_GPT-ResBlock-SE"
 
 # Path to a checkpoint to load. If set, will load this checkpoint and resume training (evaluation)
 ckpt_path: null

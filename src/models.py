@@ -46,11 +46,14 @@ class ResidualBlock(nn.Module):
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size, padding=kernel_size // 2)
         self.bn2 = nn.BatchNorm2d(out_channels)
 
+        self.se = SqueezeExcite(out_channels)  # 👈 Added SE module
+
         # Skip connection
         self.skip = nn.Sequential()
         if stride != 1 or in_channels != out_channels:
             self.skip = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride), nn.BatchNorm2d(out_channels)
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride),
+                nn.BatchNorm2d(out_channels)
             )
 
     def forward(self, x):
@@ -63,10 +66,29 @@ class ResidualBlock(nn.Module):
         out = self.conv2(out)
         out = self.bn2(out)
 
+        out = self.se(out)  # 👈 Apply SE before adding skip
+
         out += self.skip(identity)
         out = self.relu(out)
 
         return out
+    
+class SqueezeExcite(nn.Module):
+    def __init__(self, channels, reduction=16):
+        super().__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channels, channels // reduction),
+            nn.ReLU(inplace=True),
+            nn.Linear(channels // reduction, channels),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1, 1)
+        return x * y
 
 
 class SimpleCNN(nn.Module):
@@ -107,6 +129,39 @@ class SimpleCNN(nn.Module):
             nn.Conv2d(current_dim // 2, n_output_channels, kernel_size=1),
         )
 
+        # Initialize weights
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        # Initialize convolutional layers in self.initial
+        for module in self.initial:
+            if isinstance(module, nn.Conv2d):
+                # Use He initialization for ReLU (recommended)
+                nn.init.kaiming_uniform_(module.weight, mode='fan_in', nonlinearity='relu')
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+                # Alternative: Use Xavier for consistency
+                # nn.init.xavier_uniform_(module.weight)
+                # if module.bias is not None:
+                #     nn.init.zeros_(module.bias)
+
+        # Initialize convolutional layers in self.res_blocks
+        for res_block in self.res_blocks:
+            for module in res_block.modules():
+                if isinstance(module, nn.Conv2d):
+                    nn.init.kaiming_uniform_(module.weight, mode='fan_in', nonlinearity='relu')
+                    if module.bias is not None:
+                        nn.init.zeros_(module.bias)
+                    # Alternative: nn.init.xavier_uniform_(module.weight)
+
+        # Initialize convolutional layers in self.final
+        for module in self.final:
+            if isinstance(module, nn.Conv2d):
+                nn.init.kaiming_uniform_(module.weight, mode='fan_in', nonlinearity='relu')
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+                # Alternative: nn.init.xavier_uniform_(module.weight)
+
     def forward(self, x):
         x = self.initial(x)
 
@@ -118,7 +173,6 @@ class SimpleCNN(nn.Module):
 
         return x
 
-#CHATGPT ADDITION
 class ConvLSTMCell(nn.Module):
     def __init__(self, input_dim, hidden_dim, kernel_size, bias=True):
         super().__init__()
@@ -132,6 +186,17 @@ class ConvLSTMCell(nn.Module):
             bias=bias
         )
         self.hidden_dim = hidden_dim
+        self.norm_i = nn.LayerNorm([hidden_dim, 1, 1])
+        self.norm_f = nn.LayerNorm([hidden_dim, 1, 1])
+        self.norm_o = nn.LayerNorm([hidden_dim, 1, 1])
+        self.norm_g = nn.LayerNorm([hidden_dim, 1, 1])
+
+        # Initialize weights
+        nn.init.xavier_uniform_(self.conv.weight)
+        if self.conv.bias is not None:
+            nn.init.zeros_(self.conv.bias)
+            # Optional: Set a positive bias for forget gate (indices hidden_dim:2*hidden_dim)
+            # self.conv.bias.data[self.hidden_dim:2*self.hidden_dim].fill_(0.1)
 
     def forward(self, x, h, c):
         # x:      (B, input_dim,  H,  W)
@@ -139,14 +204,13 @@ class ConvLSTMCell(nn.Module):
         combined = torch.cat([x, h], dim=1)       # (B, input+hidden, H, W)
         conv_out = self.conv(combined)            # (B, 4*hidden, H, W)
         i, f, o, g = torch.chunk(conv_out, 4, dim=1)
-        i = torch.relu(i)
+        i = torch.sigmoid(i)
         f = torch.sigmoid(f)
-        o = torch.relu(o) #3 Sigmoids before
-        g = torch.relu(g) #tanh before
+        o = torch.sigmoid(o)
+        g = torch.tanh(g)
         c_next = f * c + i * g
         h_next = o * torch.tanh(c_next)
         return h_next, c_next
-
 
 class CNN_LSTM(nn.Module):
     def __init__(
@@ -162,25 +226,28 @@ class CNN_LSTM(nn.Module):
 
         self.cnn = SimpleCNN(n_input_channels=n_input_channels, n_output_channels=cnn_feature_dim, **cnn_kwargs)
         
-
-        # 2) One ConvLSTMCell per layer (we’ll stack them in a list for >1 layer)
+        # One ConvLSTMCell per layer
         self.cell_list = nn.ModuleList([
             ConvLSTMCell(
-                input_dim = cnn_feature_dim if layer_idx == 0 else lstm_hidden_dim,
-                hidden_dim = lstm_hidden_dim,
-                kernel_size = cnn_kwargs.get("kernel_size", 3)
+                input_dim=cnn_feature_dim if layer_idx == 0 else lstm_hidden_dim,
+                hidden_dim=lstm_hidden_dim,
+                kernel_size=cnn_kwargs.get("kernel_size", 3)
             )
             for layer_idx in range(lstm_layers)
         ])
 
-        # 3) Map from hidden state → final climate variable maps
+        # Final 1x1 conv to map hidden state to output
         self.final_conv = nn.Conv2d(
             in_channels=lstm_hidden_dim,
             out_channels=n_output_channels,
             kernel_size=1
         )
 
-    #Heavily GPT altered
+        # Initialize weights for final_conv
+        nn.init.xavier_uniform_(self.final_conv.weight)
+        if self.final_conv.bias is not None:
+            nn.init.zeros_(self.final_conv.bias)
+
     def forward(self, x):
         """
         x: (B, T, C_in, H, W)
@@ -189,25 +256,23 @@ class CNN_LSTM(nn.Module):
         B, T, C, H, W = x.shape
         device = x.device
 
-        # Will hold h & c for each layer
+        # Initialize h and c for each layer
         h = [torch.zeros(B, cell.hidden_dim, H, W, device=device) for cell in self.cell_list]
-        c = [torch.zeros_like(h_l)                                    for h_l in h]
+        c = [torch.zeros_like(h_l) for h_l in h]
 
         outputs = []
         for t in range(T):
-            # 1) Extract spatial features at time t
-            feat = self.cnn(x[:, t])              # (B, cnn_feature_dim, H, W)
-            # optionally wrap in checkpoint to save memory:
-            # feat = checkpoint(self.cnn, x[:, t])
+            # Extract spatial features at time t
+            feat = self.cnn(x[:, t])  # (B, cnn_feature_dim, H, W)
 
-            # 2) Pass through each ConvLSTM layer
+            # Pass through each ConvLSTM layer
             for layer_idx, cell in enumerate(self.cell_list):
                 h[layer_idx], c[layer_idx] = cell(feat, h[layer_idx], c[layer_idx])
-                feat = h[layer_idx]               # feed this layer’s h to the next
+                feat = h[layer_idx]  # Feed this layer’s h to the next
 
-            # 3) Project to final output map
-            out_map = self.final_conv(h[-1])     # (B, n_output_channels, H, W)
+            # Project to final output map
+            out_map = self.final_conv(h[-1])  # (B, n_output_channels, H, W)
             outputs.append(out_map)
 
-        # stack on the time axis → (B, T, C_out, H, W)
+        # Stack on the time axis → (B, T, C_out, H, W)
         return torch.stack(outputs, dim=1)
