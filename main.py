@@ -44,24 +44,23 @@ log = get_logger(__name__)
 
 # Dataset to precompute all tensors during initialization
 class ClimateDataset(Dataset):
-    def __init__(self, inputs_norm_dask, outputs_dask, output_is_normalized=True):
-        # Store dataset size
-        self.size = inputs_norm_dask.shape[0]
+    def __init__(self, inputs_norm_dask, outputs_dask, seq_len=1, output_is_normalized=True):
+        self.seq_len = seq_len
+        total_time = inputs_norm_dask.shape[0]
+        self.size = total_time - seq_len + 1 if seq_len > 1 else total_time
+        if self.size <= 0:
+            raise ValueError("Sequence length exceeds available time steps.")
 
-        # Log once with basic information
         log.info(
-            f"Creating dataset: {self.size} samples, input shape: {inputs_norm_dask.shape}, normalized output: {output_is_normalized}"
+            f"Creating dataset: {self.size} samples, input shape: {inputs_norm_dask.shape}, seq_len: {seq_len}, normalized output: {output_is_normalized}"
         )
 
-        # Precompute all tensors in one go
+        # Precompute tensors
         inputs_np = inputs_norm_dask.compute()
         outputs_np = outputs_dask.compute()
+        self.input_tensors = torch.from_numpy(inputs_np).float()  # (total_time, channels, y, x)
+        self.output_tensors = torch.from_numpy(outputs_np).float()  # (total_time, output_channels, y, x)
 
-        # Convert to PyTorch tensors
-        self.input_tensors = torch.from_numpy(inputs_np).float()
-        self.output_tensors = torch.from_numpy(outputs_np).float()
-
-        # Handle NaN values (should not occur)
         if torch.isnan(self.input_tensors).any() or torch.isnan(self.output_tensors).any():
             raise ValueError("NaN values detected in dataset tensors")
 
@@ -69,7 +68,16 @@ class ClimateDataset(Dataset):
         return self.size
 
     def __getitem__(self, idx):
-        return self.input_tensors[idx], self.output_tensors[idx]
+        if self.seq_len == 1:
+            input_data = self.input_tensors[idx].unsqueeze(1)  # (channels, 1, y, x)
+            output_data = self.output_tensors[idx]  # (output_channels, y, x)
+        else:
+            start_idx = idx
+            end_idx = start_idx + self.seq_len
+            input_seq = self.input_tensors[start_idx:end_idx]  # (seq_len, channels, y, x)
+            input_data = input_seq.permute(1, 0, 2, 3)  # (channels, seq_len, y, x)
+            output_data = self.output_tensors[end_idx - 1]  # (output_channels, y, x)
+        return input_data, output_data
 
 
 def _load_process_ssp_data(ds, ssp, input_variables, output_variables, member_id, spatial_template):
@@ -143,6 +151,7 @@ class ClimateEmulationDataModule(LightningDataModule):
         eval_batch_size: int = None,
         num_workers: int = 0,
         seed: int = 42,
+        seq_len: int = 1,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -245,9 +254,9 @@ class ClimateEmulationDataModule(LightningDataModule):
             test_output_raw_dask = sliced_test_output_raw_dask  # Keep unnormed for evaluation
 
         # Create datasets
-        self.train_dataset = ClimateDataset(train_input_norm_dask, train_output_norm_dask, output_is_normalized=True)
-        self.val_dataset = ClimateDataset(val_input_norm_dask, val_output_norm_dask, output_is_normalized=True)
-        self.test_dataset = ClimateDataset(test_input_norm_dask, test_output_raw_dask, output_is_normalized=False)
+        self.train_dataset = ClimateDataset(train_input_norm_dask, train_output_norm_dask, seq_len=self.hparams.seq_len, output_is_normalized=True)
+        self.val_dataset = ClimateDataset(val_input_norm_dask, val_output_norm_dask, seq_len=self.hparams.seq_len, output_is_normalized=True)
+        self.test_dataset = ClimateDataset(test_input_norm_dask, test_output_raw_dask, seq_len=self.hparams.seq_len, output_is_normalized=False)
 
         # Log dataset sizes in a single message
         log.info(
@@ -329,23 +338,23 @@ class ClimateEmulationModule(pl.LightningModule):
         self.normalizer = self.trainer.datamodule.normalizer  # Access the normalizer from the datamodule
 
     def training_step(self, batch, batch_idx):
-        x, y_true_norm = batch
-        y_pred_norm = self(x)
-        loss = self.criterion(y_pred_norm, y_true_norm)
+        x, y_true_norm = batch  # x: (batch_size, channels, seq_len, y, x), y_true_norm: (batch_size, output_channels, y, x)
+        y_pred_seq = self(x)  # (batch_size, output_channels, seq_len, y, x)
+        y_pred_last = y_pred_seq[:, :, -1, :, :]  # (batch_size, output_channels, y, x)
+        loss = self.criterion(y_pred_last, y_true_norm)
         self.log("train/loss", loss, prog_bar=True, batch_size=x.size(0))
         return loss
+    
 
     def validation_step(self, batch, batch_idx):
         x, y_true_norm = batch
-        y_pred_norm = self(x)
-        loss = self.criterion(y_pred_norm, y_true_norm)
+        y_pred_seq = self(x)
+        y_pred_last = y_pred_seq[:, :, -1, :, :]
+        loss = self.criterion(y_pred_last, y_true_norm)
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True, batch_size=x.size(0), sync_dist=True)
-
-        # Save unnormalized outputs for decadal mean/stddev calculation in validation_epoch_end
-        y_pred_norm = self.normalizer.inverse_transform_output(y_pred_norm.cpu().numpy())
-        y_true_norm = self.normalizer.inverse_transform_output(y_true_norm.cpu().numpy())
-        self.validation_step_outputs.append((y_pred_norm, y_true_norm))
-
+        y_pred_denorm = self.normalizer.inverse_transform_output(y_pred_last.cpu().numpy())
+        y_true_denorm = self.normalizer.inverse_transform_output(y_true_norm.cpu().numpy())
+        self.validation_step_outputs.append((y_pred_denorm, y_true_denorm))
         return loss
 
     def _evaluate_predictions(self, predictions, targets, is_test=False):
@@ -459,9 +468,9 @@ class ClimateEmulationModule(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         x, y_true_denorm = batch
-        y_pred_norm = self(x)
-        # Denormalize the predictions for evaluation back to original scale
-        y_pred_denorm = self.normalizer.inverse_transform_output(y_pred_norm.cpu().numpy())
+        y_pred_seq = self(x)
+        y_pred_last = y_pred_seq[:, :, -1, :, :]
+        y_pred_denorm = self.normalizer.inverse_transform_output(y_pred_last.cpu().numpy())
         y_true_denorm_np = y_true_denorm.cpu().numpy()
         self.test_step_outputs.append((y_pred_denorm, y_true_denorm_np))
 

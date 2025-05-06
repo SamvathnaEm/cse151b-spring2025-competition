@@ -20,17 +20,18 @@ def get_model(cfg: DictConfig):
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=kernel_size // 2)
-        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv1 = nn.Conv3d(in_channels, out_channels, kernel_size, stride=stride, padding=kernel_size // 2)
+        self.bn1 = nn.BatchNorm3d(out_channels)
         self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size, padding=kernel_size // 2)
-        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv3d(out_channels, out_channels, kernel_size, padding=kernel_size // 2)
+        self.bn2 = nn.BatchNorm3d(out_channels)
 
         # Skip connection
         self.skip = nn.Sequential()
         if stride != 1 or in_channels != out_channels:
             self.skip = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride), nn.BatchNorm2d(out_channels)
+                nn.Conv3d(in_channels, out_channels, kernel_size=1, stride=stride), 
+                nn.BatchNorm3d(out_channels)
             )
 
     def forward(self, x):
@@ -63,8 +64,8 @@ class SimpleCNN(nn.Module):
 
         # Initial convolution to expand channels
         self.initial = nn.Sequential(
-            nn.Conv2d(n_input_channels, init_dim, kernel_size=kernel_size, padding=kernel_size // 2),
-            nn.BatchNorm2d(init_dim),
+            nn.Conv3d(n_input_channels, init_dim, kernel_size=kernel_size, padding=kernel_size // 2),
+            nn.BatchNorm3d(init_dim),
             nn.ReLU(inplace=True),
         )
 
@@ -79,12 +80,12 @@ class SimpleCNN(nn.Module):
                 current_dim *= 2
 
         # Final prediction layers
-        self.dropout = nn.Dropout2d(dropout_rate)
+        self.dropout = nn.Dropout3d(dropout_rate)
         self.final = nn.Sequential(
-            nn.Conv2d(current_dim, current_dim // 2, kernel_size=kernel_size, padding=kernel_size // 2),
-            nn.BatchNorm2d(current_dim // 2),
+            nn.Conv3d(current_dim, current_dim // 2, kernel_size=kernel_size, padding=kernel_size // 2),
+            nn.BatchNorm3d(current_dim // 2),
             nn.ReLU(inplace=True),
-            nn.Conv2d(current_dim // 2, n_output_channels, kernel_size=1),
+            nn.Conv3d(current_dim // 2, n_output_channels, kernel_size=1),
         )
 
     def forward(self, x):
