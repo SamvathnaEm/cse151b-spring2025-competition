@@ -40,6 +40,29 @@ log = get_logger(__name__)
 
 
 # --- Data Handling ---
+class ClimateSequenceDataset(Dataset):
+    def __init__(self, inputs_norm_dask, outputs_dask, sequence_len=12):
+        self.size = inputs_norm_dask.shape[0] - sequence_len + 1
+        self.sequence_len = sequence_len
+        # Precompute all tensors in one go
+        inputs_np = inputs_norm_dask.compute()
+        outputs_np = outputs_dask.compute()
+
+        # Convert to PyTorch tensors
+        self.input_tensors = torch.from_numpy(inputs_np).float()
+        self.output_tensors = torch.from_numpy(outputs_np).float()
+
+        # Handle NaN values (should not occur)
+        if torch.isnan(self.input_tensors).any() or torch.isnan(self.output_tensors).any():
+            raise ValueError("NaN values detected in dataset tensors")
+            
+    def __len__(self):
+        return self.size
+
+    def __getitem__(self, idx):
+        xVals = self.input_tensors[idx: idx + self.sequence_len]
+        yVals = self.output_tensors[idx: idx + self.sequence_len]
+        return xVals, yVals
 
 
 # Dataset to precompute all tensors during initialization
@@ -245,9 +268,9 @@ class ClimateEmulationDataModule(LightningDataModule):
             test_output_raw_dask = sliced_test_output_raw_dask  # Keep unnormed for evaluation
 
         # Create datasets
-        self.train_dataset = ClimateDataset(train_input_norm_dask, train_output_norm_dask, output_is_normalized=True)
-        self.val_dataset = ClimateDataset(val_input_norm_dask, val_output_norm_dask, output_is_normalized=True)
-        self.test_dataset = ClimateDataset(test_input_norm_dask, test_output_raw_dask, output_is_normalized=False)
+        self.train_dataset = ClimateSequenceDataset(train_input_norm_dask, train_output_norm_dask)
+        self.val_dataset = ClimateSequenceDataset(val_input_norm_dask, val_output_norm_dask)
+        self.test_dataset = ClimateSequenceDataset(test_input_norm_dask, test_output_raw_dask)
 
         # Log dataset sizes in a single message
         log.info(
@@ -331,6 +354,8 @@ class ClimateEmulationModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y_true_norm = batch
         y_pred_norm = self(x)
+        if y_true_norm.ndim == 5:
+            y_true_norm = y_true_norm.mean(dim=1)
         loss = self.criterion(y_pred_norm, y_true_norm)
         self.log("train/loss", loss, prog_bar=True, batch_size=x.size(0))
         return loss
@@ -338,6 +363,8 @@ class ClimateEmulationModule(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, y_true_norm = batch
         y_pred_norm = self(x)
+        if y_true_norm.ndim == 5:
+            y_true_norm = y_true_norm.mean(dim=1)
         loss = self.criterion(y_pred_norm, y_true_norm)
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True, batch_size=x.size(0), sync_dist=True)
 
@@ -460,8 +487,13 @@ class ClimateEmulationModule(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         x, y_true_denorm = batch
         y_pred_norm = self(x)
-        # Denormalize the predictions for evaluation back to original scale
+        # Denormalize predictions
         y_pred_denorm = self.normalizer.inverse_transform_output(y_pred_norm.cpu().numpy())
+    
+        # Reduce target to match prediction shape
+        if y_true_denorm.ndim == 5:
+            y_true_denorm = y_true_denorm.mean(dim=1)
+    
         y_true_denorm_np = y_true_denorm.cpu().numpy()
         self.test_step_outputs.append((y_pred_denorm, y_true_denorm_np))
 
@@ -511,7 +543,7 @@ class ClimateEmulationModule(pl.LightningModule):
         log.info(f"Kaggle submission saved to {filepath}")
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+        optimizer = optim.AdamW(self.parameters(), lr=self.hparams.learning_rate, weight_decay=1e-4)
         return optimizer
 
 
