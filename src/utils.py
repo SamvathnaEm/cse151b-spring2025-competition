@@ -3,6 +3,7 @@ from typing import Any, Dict
 
 import hydra
 import matplotlib.pyplot as plt
+import dask.array as da
 import numpy as np
 import torch
 import xarray as xr
@@ -67,13 +68,13 @@ class Normalizer:
 
     def normalize(self, data, data_type="input"):
         """
-        Normalize data using fitted mean and std values
+        Normalize data using fitted mean and std values, skipping normalization for seasonal channels.
 
         Args:
             data: Input data to normalize (numpy array or dask array)
-                 Expected shapes:
-                 - input: (time, channels, y, x)
-                 - output: (time, C, y, x) - channel dimension should already be added
+                Expected shapes:
+                - input: (time, channels, y, x), where channels includes 5 climate variables + 2 seasonal channels
+                - output: (time, C, y, x) - channel dimension should already be added
             data_type: Either 'input' or 'output' to specify which normalization to use
 
         Returns:
@@ -82,7 +83,16 @@ class Normalizer:
         if data_type == "input":
             if self.mean_in is None or self.std_in is None:
                 raise RuntimeError("Must fit input normalizer before normalizing input data")
-            return (data - self.mean_in) / self.std_in
+            # Split data into climate variables (first 5 channels) and seasonal channels (last 2)
+            climate_data = data[:, :5, :, :]  # CO2, SO2, CH4, BC, rsdt
+            seasonal_data = data[:, 5:, :, :]  # sin_month, cos_month
+            # Normalize only climate variables
+            normalized_climate = (climate_data - self.mean_in[:, :5, :, :]) / self.std_in[:, :5, :, :]
+            # Concatenate normalized climate data with unnormalized seasonal data
+            if isinstance(data, da.Array):
+                return da.concatenate([normalized_climate, seasonal_data], axis=1)
+            else:
+                return np.concatenate([normalized_climate, seasonal_data], axis=1)
         elif data_type == "output":
             if self.mean_out is None or self.std_out is None:
                 raise RuntimeError("Must fit output normalizer before normalizing output data")

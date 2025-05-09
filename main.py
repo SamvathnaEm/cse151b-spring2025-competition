@@ -15,6 +15,7 @@ from lightning.pytorch import LightningDataModule
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset
+import pandas as pd
 
 
 try:
@@ -91,19 +92,22 @@ def _load_process_ssp_data(ds, ssp, input_variables, output_variables, member_id
     Args:
         ds (xr.Dataset): The opened xarray dataset.
         ssp (str): The SSP identifier (e.g., 'ssp126').
-        input_variables (list): List of input variable names.
+        input_variables (list): List of input variable names, including 'sin_month' and 'cos_month' as placeholders.
         output_variables (list): List of output variable names.
         member_id (int): The member ID to select.
-        spatial_template (xr.DataArray): A template DataArray with ('y', 'x') dimensions
-                                          for broadcasting global variables.
+        spatial_template (xr.DataArray): A template DataArray with ('y', 'x') dimensions.
 
     Returns:
         tuple: (input_dask_array, output_dask_array)
                - input_dask_array: Stacked dask array of inputs (time, channels, y, x).
                - output_dask_array: Stacked dask array of outputs (time, channels, y, x).
     """
+    # Filter input variables to only those in the dataset
+    dataset_vars = [var for var in input_variables if var not in ['sin_month', 'cos_month']]
     ssp_input_dasks = []
-    for var in input_variables:
+
+    # Load actual dataset variables
+    for var in dataset_vars:
         da_var = ds[var].sel(ssp=ssp)
         # Rename spatial dims if needed
         if "latitude" in da_var.dims:
@@ -113,8 +117,7 @@ def _load_process_ssp_data(ds, ssp, input_variables, output_variables, member_id
             da_var = da_var.sel(member_id=member_id)
 
         # Process based on dimensions
-        if set(da_var.dims) == {"time"}:  # Global variable, broadcast to spatial dims:
-            # Broadcast like template, then transpose to ensure ('time', 'y', 'x')
+        if set(da_var.dims) == {"time"}:  # Global variable, broadcast to spatial dims
             da_var_expanded = da_var.broadcast_like(spatial_template).transpose("time", "y", "x")
             ssp_input_dasks.append(da_var_expanded.data)
         elif set(da_var.dims) == {"time", "y", "x"}:  # Spatially resolved
@@ -122,21 +125,43 @@ def _load_process_ssp_data(ds, ssp, input_variables, output_variables, member_id
         else:
             raise ValueError(f"Unexpected dimensions for variable {var} in SSP {ssp}: {da_var.dims}")
 
-    # Stack inputs along channel dimension -> dask array (time, channels, y, x)
+    # Add seasonal encoding channels
+    # Use time coordinates from a variable after SSP selection
+    time_coords = ds[dataset_vars[0]].sel(ssp=ssp).time.values  # e.g., ds['CO2'].sel(ssp=ssp).time
+    # Extract month (1–12) from cftime objects
+    months = np.array([t.month for t in time_coords])
+    # Cyclic encoding: sin and cos of month
+    month_rad = 2 * np.pi * (months - 1) / 12  # Map months 1–12 to 0–2π
+    sin_month = np.sin(month_rad)  # Shape: (time,)
+    cos_month = np.cos(month_rad)  # Shape: (time,)
+    
+    # Create DataArray with 1D data and time dimension, then broadcast
+    sin_month_da = xr.DataArray(
+        sin_month,
+        dims=["time"],
+        coords={"time": time_coords}
+    ).broadcast_like(spatial_template).transpose("time", "y", "x").data
+    cos_month_da = xr.DataArray(
+        cos_month,
+        dims=["time"],
+        coords={"time": time_coords}
+    ).broadcast_like(spatial_template).transpose("time", "y", "x").data
+    
+    # Append seasonal channels
+    ssp_input_dasks.extend([sin_month_da, cos_month_da])
+
+    # Stack inputs along channel dimension
     stacked_input_dask = da.stack(ssp_input_dasks, axis=1)
 
-    # Prepare output dask arrays for each output variable
+    # Prepare output dask arrays
     output_dasks = []
     for var in output_variables:
         da_output = ds[var].sel(ssp=ssp, member_id=member_id)
-        # Ensure output also uses y, x if necessary
         if "latitude" in da_output.dims:
             da_output = da_output.rename({"latitude": "y", "longitude": "x"})
-
-        # Add time, y, x dimensions as a dask array
         output_dasks.append(da_output.data)
 
-    # Stack outputs along channel dimension -> dask array (time, channels, y, x)
+    # Stack outputs along channel dimension
     stacked_output_dask = da.stack(output_dasks, axis=1)
     return stacked_input_dask, stacked_output_dask
 
@@ -178,22 +203,16 @@ class ClimateEmulationDataModule(LightningDataModule):
     def setup(self, stage: str | None = None):
         log.info(f"Setting up data module for stage: {stage} from {self.hparams.path}")
 
-        # Use context manager for opening dataset
         with xr.open_zarr(self.hparams.path, consolidated=True, chunks={"time": 24}) as ds:
-            # Create a spatial template ONCE using a variable guaranteed to have y, x
-            # Extract the template DataArray before renaming for coordinate access
-            spatial_template_da = ds["rsdt"].isel(time=0, ssp=0, drop=True)  # drop time/ssp dims
+            spatial_template_da = ds["rsdt"].isel(time=0, ssp=0, drop=True)
 
-            # --- Prepare Training and Validation Data ---
             train_inputs_dask_list, train_outputs_dask_list = [], []
             val_input_dask, val_output_dask = None, None
             val_ssp = "ssp370"
             val_months = 120
 
-            # Process all SSPs
             log.info(f"Loading data from SSPs: {self.hparams.train_ssps}")
             for ssp in self.hparams.train_ssps:
-                # Load the data for this SSP
                 ssp_input_dask, ssp_output_dask = _load_process_ssp_data(
                     ds,
                     ssp,
@@ -204,40 +223,34 @@ class ClimateEmulationDataModule(LightningDataModule):
                 )
 
                 if ssp == val_ssp:
-                    # Special handling for SSP 370: split into training and validation
-                    # Last 120 months go to validation
                     val_input_dask = ssp_input_dask[-val_months:]
                     val_output_dask = ssp_output_dask[-val_months:]
-                    # Early months go to training if there are any
                     train_inputs_dask_list.append(ssp_input_dask[:-val_months])
                     train_outputs_dask_list.append(ssp_output_dask[:-val_months])
                 else:
-                    # All other SSPs go entirely to training
                     train_inputs_dask_list.append(ssp_input_dask)
                     train_outputs_dask_list.append(ssp_output_dask)
 
-            # Concatenate training data only
             train_input_dask = da.concatenate(train_inputs_dask_list, axis=0)
             train_output_dask = da.concatenate(train_outputs_dask_list, axis=0)
 
-            # Compute z-score normalization statistics using the training data
+            # Compute normalization statistics
             input_mean = da.nanmean(train_input_dask, axis=(0, 2, 3), keepdims=True).compute()
             input_std = da.nanstd(train_input_dask, axis=(0, 2, 3), keepdims=True).compute()
+            # Avoid division by zero for seasonal channels (sin_month, cos_month)
+            input_std = np.where(input_std == 0, 1.0, input_std)  # Set std=1 for constant channels
             output_mean = da.nanmean(train_output_dask, axis=(0, 2, 3), keepdims=True).compute()
             output_std = da.nanstd(train_output_dask, axis=(0, 2, 3), keepdims=True).compute()
 
             self.normalizer.set_input_statistics(mean=input_mean, std=input_std)
             self.normalizer.set_output_statistics(mean=output_mean, std=output_std)
 
-            # --- Define Normalized Training Dask Arrays ---
             train_input_norm_dask = self.normalizer.normalize(train_input_dask, data_type="input")
             train_output_norm_dask = self.normalizer.normalize(train_output_dask, data_type="output")
 
-            # --- Define Normalized Validation Dask Arrays ---
             val_input_norm_dask = self.normalizer.normalize(val_input_dask, data_type="input")
             val_output_norm_dask = self.normalizer.normalize(val_output_dask, data_type="output")
 
-            # --- Prepare Test Data ---
             full_test_input_dask, full_test_output_dask = _load_process_ssp_data(
                 ds,
                 self.hparams.test_ssp,
@@ -247,23 +260,18 @@ class ClimateEmulationDataModule(LightningDataModule):
                 spatial_template_da,
             )
 
-            # --- Slice Test Data ---
-            test_slice = slice(-self.hparams.test_months, None)  # Last N months
-
+            test_slice = slice(-self.hparams.test_months, None)
             sliced_test_input_dask = full_test_input_dask[test_slice]
             sliced_test_output_raw_dask = full_test_output_dask[test_slice]
 
-            # --- Define Normalized Test Input Dask Array ---
             test_input_norm_dask = self.normalizer.normalize(sliced_test_input_dask, data_type="input")
-            test_output_raw_dask = sliced_test_output_raw_dask  # Keep unnormed for evaluation
+            test_output_raw_dask = sliced_test_output_raw_dask
 
-        # Create datasets
         self.train_dataset = ClimateDataset(train_input_norm_dask, train_output_norm_dask, seq_len=self.hparams.seq_len, output_is_normalized=True)
         self.train_dataset.training = True
         self.val_dataset = ClimateDataset(val_input_norm_dask, val_output_norm_dask, seq_len=self.hparams.seq_len, output_is_normalized=True)
         self.test_dataset = ClimateDataset(test_input_norm_dask, test_output_raw_dask, seq_len=self.hparams.seq_len, output_is_normalized=False)
 
-        # Log dataset sizes in a single message
         log.info(
             f"Datasets created. Train: {len(self.train_dataset)}, Val: {len(self.val_dataset)} (last months of {val_ssp}), Test: {len(self.test_dataset)}"
         )

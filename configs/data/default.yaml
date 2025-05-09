@@ -8,6 +8,8 @@ input_vars:
   - "CH4"
   - "BC"
   - "rsdt"
+  - "sin_month"
+  - "cos_month"
 
 output_vars:
   - "tas"
