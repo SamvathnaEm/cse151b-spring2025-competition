@@ -1,6 +1,6 @@
 # @package _global_.trainer
 
-max_epochs: 75  # Specific number of epochs
+max_epochs: 360  # Specific number of epochs
 accelerator: auto  # Will be auto-detected in code
 devices: auto  # Will be auto-detected in code
 deterministic: true

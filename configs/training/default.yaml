@@ -1,3 +1,3 @@
 # @package _global_.training
 
-lr: 5e-3
+lr: 1e-4
