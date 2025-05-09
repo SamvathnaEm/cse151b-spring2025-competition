@@ -1,3 +1,5 @@
 # @package _global_.training
 
 lr: 1e-4
+weight_decay: 0.0001  # Added for AdamW
+min_lr: 0.000001       # Added for ReduceLROnPlateau

@@ -44,9 +44,10 @@ log = get_logger(__name__)
 
 # Dataset to precompute all tensors during initialization
 class ClimateDataset(Dataset):
-    def __init__(self, inputs_norm_dask, outputs_dask, seq_len=1, output_is_normalized=True):
+    def __init__(self, inputs_norm_dask, outputs_dask, seq_len=1, output_is_normalized=True, training = False):
         self.seq_len = seq_len
         total_time = inputs_norm_dask.shape[0]
+        self.training = training
         self.size = total_time - seq_len + 1 if seq_len > 1 else total_time
         if self.size <= 0:
             raise ValueError("Sequence length exceeds available time steps.")
@@ -77,6 +78,9 @@ class ClimateDataset(Dataset):
             input_seq = self.input_tensors[start_idx:end_idx]  # (seq_len, channels, y, x)
             input_data = input_seq.permute(1, 0, 2, 3)  # (channels, seq_len, y, x)
             output_data = self.output_tensors[end_idx - 1]  # (output_channels, y, x)
+        # Grok gaussian noise
+        if self.training:
+            input_data += torch.randn_like(input_data) * 0.01
         return input_data, output_data
 
 
@@ -255,6 +259,7 @@ class ClimateEmulationDataModule(LightningDataModule):
 
         # Create datasets
         self.train_dataset = ClimateDataset(train_input_norm_dask, train_output_norm_dask, seq_len=self.hparams.seq_len, output_is_normalized=True)
+        self.train_dataset.training = True
         self.val_dataset = ClimateDataset(val_input_norm_dask, val_output_norm_dask, seq_len=self.hparams.seq_len, output_is_normalized=True)
         self.test_dataset = ClimateDataset(test_input_norm_dask, test_output_raw_dask, seq_len=self.hparams.seq_len, output_is_normalized=False)
 
@@ -320,16 +325,15 @@ class ClimateEmulationDataModule(LightningDataModule):
 
 # --- PyTorch Lightning Module ---
 class ClimateEmulationModule(pl.LightningModule):
-    def __init__(self, model: nn.Module, learning_rate: float):
+    def __init__(self, model: nn.Module, learning_rate: float, weight_decay: float = 1e-4, min_lr: float = 1e-5):
         super().__init__()
         self.model = model
-        # Access hyperparams via self.hparams object after saving, e.g., self.hparams.learning_rate
-        self.save_hyperparameters(ignore=["model"])
+        self.save_hyperparameters(ignore=["model"])  # Saves learning_rate, weight_decay, min_lr
         self.criterion = nn.MSELoss()
         self.normalizer = None
-        # Store evaluation outputs for time-mean calculation
         self.test_step_outputs = []
         self.validation_step_outputs = []
+
 
     def forward(self, x):
         return self.model(x)
@@ -520,8 +524,32 @@ class ClimateEmulationModule(pl.LightningModule):
         log.info(f"Kaggle submission saved to {filepath}")
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
-        return optimizer
+        # Use AdamW optimizer with weight decay
+        optimizer = optim.AdamW(
+            self.parameters(),
+            lr=self.hparams.learning_rate,
+            weight_decay=self.hparams.get('weight_decay', 1e-4)  # Default to 1e-4 if not specified
+        )
+        
+        # Configure ReduceLROnPlateau scheduler
+        scheduler = {
+            'scheduler': optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode='min',           # Minimize validation loss
+                factor=0.5,           # Reduce LR by half
+                patience=5,           # Wait 5 epochs without improvement
+                min_lr=self.hparams.get('min_lr', 1e-5),  # Minimum LR
+                verbose=True          # Print LR changes
+            ),
+            'monitor': 'val/loss',    # Metric to monitor (validation loss)
+            'interval': 'epoch',      # Check after each epoch
+            'frequency': 1            # Check every epoch
+        }
+        
+        return {
+            'optimizer': optimizer,
+            'lr_scheduler': scheduler
+        }
 
 
 # --- Main Execution with Hydra ---
@@ -538,10 +566,29 @@ def main(cfg: DictConfig):
     model = get_model(cfg)
 
     # Create lightning module
-    lightning_module = ClimateEmulationModule(model, learning_rate=cfg.training.lr)
+    lightning_module = ClimateEmulationModule(
+        model,
+        learning_rate=cfg.training.lr,
+        weight_decay=cfg.training.get('weight_decay', 1e-4),  # Pass weight_decay
+        min_lr=cfg.training.get('min_lr', 1e-5)              # Pass min_lr for scheduler
+    )
 
-    # Create lightning trainer
+    # Create lightning trainer with early stopping
     trainer_config = get_trainer_config(cfg, model=model)
+    
+    # Add early stopping callback
+    early_stopping_callback = pl.callbacks.EarlyStopping(
+        monitor='val/loss',       # Monitor validation loss
+        patience=10,              # Stop after 10 epochs without improvement
+        mode='min',               # Minimize the monitored metric
+        verbose=True              # Print when stopping
+    )
+    
+    # Append early stopping to callbacks
+    if 'callbacks' not in trainer_config:
+        trainer_config['callbacks'] = []
+    trainer_config['callbacks'].append(early_stopping_callback)
+    
     trainer = pl.Trainer(**trainer_config)
 
     if cfg.ckpt_path and isinstance(cfg.ckpt_path, str):
@@ -552,9 +599,7 @@ def main(cfg: DictConfig):
     log.info("Training finished.")
 
     # Test model
-    # IMPORTANT: Please note that the test metrics will be bad because the test targets have been corrupted on the public Kaggle dataset.
-    # The purpose of testing below is to generate the Kaggle submission file based on your model's predictions.
-    trainer_config["devices"] = 1  # Make sure you test on 1 GPU only to avoid synchronization issues with DDP
+    trainer_config["devices"] = 1  # Make sure you test on 1 GPU only
     eval_trainer = pl.Trainer(**trainer_config)
     eval_trainer.test(lightning_module, datamodule=datamodule, ckpt_path=cfg.ckpt_path)
 
