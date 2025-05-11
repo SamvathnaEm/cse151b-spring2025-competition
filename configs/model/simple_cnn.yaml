@@ -7,4 +7,4 @@ type: simple_cnn
 kernel_size: 3
 init_dim: 64
 depth: 4
-dropout_rate: 0.2
+dropout_rate: 0.5

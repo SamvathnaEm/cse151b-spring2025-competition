@@ -1,0 +1,5 @@
+# @package _global_.model
+type: conv_lstm
+hidden_channels: 16  # Number of channels in hidden layers
+num_layers: 2        # Number of ConvLSTM layers
+kernel_size: 3       # Size of the convolutional kernel

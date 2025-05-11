@@ -22,5 +22,6 @@ train_ssps:
 test_ssp: "ssp245"
 test_months: 360
 
-batch_size: 32
+batch_size: 8
 num_workers: 4
+sequence_length: 12  # Added for ConvLSTM to process 12-month sequences
