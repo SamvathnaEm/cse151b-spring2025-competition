@@ -2,7 +2,7 @@
 
 defaults:
   - data: default
-  - model: simple_cnn
+  - model: cnnlstm
   - training: default
   - trainer: default
   - _self_
@@ -14,7 +14,7 @@ seed: 42
 use_wandb: true
 wandb_project: "cse-151b-competition"
 wandb_entity: "saem-uc-san-diego"
-run_name: null
+run_name: "Gemini2.5_CNNLSTM_Test"
 
 # Path to a checkpoint to load. If set, will load this checkpoint and resume training (evaluation)
 ckpt_path: null

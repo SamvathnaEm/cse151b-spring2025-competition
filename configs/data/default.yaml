@@ -16,11 +16,14 @@ target_member_id: 0
 
 train_ssps: 
   - "ssp126"
-  - "ssp370"
+  - "ssp370" # Used for val/train split?
   - "ssp585"
 
 test_ssp: "ssp245"
 test_months: 360
-
-batch_size: 32
+eval_batch_size: null
+sequence_length: 12
+batch_size: 8
 num_workers: 4
+output_height: 48   # NEW (or ensure get_model defaults are fine)
+output_width: 72    # NEW (or ensure get_model defaults are fine)

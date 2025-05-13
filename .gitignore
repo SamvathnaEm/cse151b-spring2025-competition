@@ -197,3 +197,4 @@ videos/**
 
 # vscode .vscode directory
 .vscode/*
+CONTEXT.md

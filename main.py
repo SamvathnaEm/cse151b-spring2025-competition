@@ -43,33 +43,43 @@ log = get_logger(__name__)
 
 
 # Dataset to precompute all tensors during initialization
+#UPDATED BY GEMINI 2.5-pro-experimental
 class ClimateDataset(Dataset):
-    def __init__(self, inputs_norm_dask, outputs_dask, output_is_normalized=True):
-        # Store dataset size
-        self.size = inputs_norm_dask.shape[0]
+    def __init__(self, inputs_norm_dask, outputs_dask, sequence_length, output_is_normalized=True): # Added sequence_length
+        self.sequence_length = sequence_length # Store sequence_length
+        self.output_is_normalized = output_is_normalized
+        # Store dataset size (total number of individual time steps)
+        self.total_timesteps = inputs_norm_dask.shape[0]
 
-        # Log once with basic information
         log.info(
-            f"Creating dataset: {self.size} samples, input shape: {inputs_norm_dask.shape}, normalized output: {output_is_normalized}"
+            f"Creating dataset: {self.total_timesteps} total time steps, sequence_length: {self.sequence_length}, "
+            f"input shape (per step): {inputs_norm_dask.shape[1:]}, normalized output: {output_is_normalized}"
         )
 
         # Precompute all tensors in one go
         inputs_np = inputs_norm_dask.compute()
         outputs_np = outputs_dask.compute()
 
-        # Convert to PyTorch tensors
         self.input_tensors = torch.from_numpy(inputs_np).float()
         self.output_tensors = torch.from_numpy(outputs_np).float()
 
-        # Handle NaN values (should not occur)
         if torch.isnan(self.input_tensors).any() or torch.isnan(self.output_tensors).any():
             raise ValueError("NaN values detected in dataset tensors")
 
     def __len__(self):
-        return self.size
+        # Number of possible start points for a sequence
+        return self.total_timesteps - self.sequence_length + 1
 
     def __getitem__(self, idx):
-        return self.input_tensors[idx], self.output_tensors[idx]
+        # idx is the starting point of the sequence
+        start_idx = idx
+        end_idx = idx + self.sequence_length
+
+        # Get sequences of inputs and outputs
+        input_seq = self.input_tensors[start_idx:end_idx]     # (seq_len, C_in, H, W)
+        output_seq = self.output_tensors[start_idx:end_idx]   # (seq_len, C_out, H, W)
+        
+        return input_seq, output_seq
 
 
 def _load_process_ssp_data(ds, ssp, input_variables, output_variables, member_id, spatial_template):
@@ -138,11 +148,14 @@ class ClimateEmulationDataModule(LightningDataModule):
         train_ssps: list,
         test_ssp: str,
         target_member_id: int,
+        sequence_length: int, 
         test_months: int = 360,
         batch_size: int = 32,
         eval_batch_size: int = None,
         num_workers: int = 0,
         seed: int = 42,
+        output_height: int | None = None,
+        output_width: int | None = None,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -175,7 +188,7 @@ class ClimateEmulationDataModule(LightningDataModule):
             train_inputs_dask_list, train_outputs_dask_list = [], []
             val_input_dask, val_output_dask = None, None
             val_ssp = "ssp370"
-            val_months = 120
+            val_months = 120 # This val_months is for splitting ssp370, not sequence_length
 
             # Process all SSPs
             log.info(f"Loading data from SSPs: {self.hparams.train_ssps}")
@@ -196,8 +209,9 @@ class ClimateEmulationDataModule(LightningDataModule):
                     val_input_dask = ssp_input_dask[-val_months:]
                     val_output_dask = ssp_output_dask[-val_months:]
                     # Early months go to training if there are any
-                    train_inputs_dask_list.append(ssp_input_dask[:-val_months])
-                    train_outputs_dask_list.append(ssp_output_dask[:-val_months])
+                    if ssp_input_dask.shape[0] > val_months: # Ensure there's training data left
+                        train_inputs_dask_list.append(ssp_input_dask[:-val_months])
+                        train_outputs_dask_list.append(ssp_output_dask[:-val_months])
                 else:
                     # All other SSPs go entirely to training
                     train_inputs_dask_list.append(ssp_input_dask)
@@ -235,7 +249,8 @@ class ClimateEmulationDataModule(LightningDataModule):
             )
 
             # --- Slice Test Data ---
-            test_slice = slice(-self.hparams.test_months, None)  # Last N months
+            # Note: test_months is the total duration of the test set, not sequence_length
+            test_slice = slice(-self.hparams.test_months, None)  
 
             sliced_test_input_dask = full_test_input_dask[test_slice]
             sliced_test_output_raw_dask = full_test_output_dask[test_slice]
@@ -244,14 +259,23 @@ class ClimateEmulationDataModule(LightningDataModule):
             test_input_norm_dask = self.normalizer.normalize(sliced_test_input_dask, data_type="input")
             test_output_raw_dask = sliced_test_output_raw_dask  # Keep unnormed for evaluation
 
-        # Create datasets
-        self.train_dataset = ClimateDataset(train_input_norm_dask, train_output_norm_dask, output_is_normalized=True)
-        self.val_dataset = ClimateDataset(val_input_norm_dask, val_output_norm_dask, output_is_normalized=True)
-        self.test_dataset = ClimateDataset(test_input_norm_dask, test_output_raw_dask, output_is_normalized=False)
+        # Create datasets, passing sequence_length
+        self.train_dataset = ClimateDataset(
+            train_input_norm_dask, train_output_norm_dask, 
+            self.hparams.sequence_length, output_is_normalized=True
+        )
+        self.val_dataset = ClimateDataset(
+            val_input_norm_dask, val_output_norm_dask, 
+            self.hparams.sequence_length, output_is_normalized=True
+        )
+        self.test_dataset = ClimateDataset(
+            test_input_norm_dask, test_output_raw_dask, 
+            self.hparams.sequence_length, output_is_normalized=False
+        )
 
         # Log dataset sizes in a single message
         log.info(
-            f"Datasets created. Train: {len(self.train_dataset)}, Val: {len(self.val_dataset)} (last months of {val_ssp}), Test: {len(self.test_dataset)}"
+            f"Datasets created. Train: {len(self.train_dataset)} sequences, Val: {len(self.val_dataset)} sequences (last months of {val_ssp}), Test: {len(self.test_dataset)} sequences"
         )
 
     # Common DataLoader configuration
@@ -327,24 +351,53 @@ class ClimateEmulationModule(pl.LightningModule):
 
     def on_fit_start(self) -> None:
         self.normalizer = self.trainer.datamodule.normalizer  # Access the normalizer from the datamodule
+        # Store sequence_length if needed, or access from datamodule.hparams directly
+        self.sequence_length = self.trainer.datamodule.hparams.sequence_length
 
     def training_step(self, batch, batch_idx):
-        x, y_true_norm = batch
-        y_pred_norm = self(x)
-        loss = self.criterion(y_pred_norm, y_true_norm)
-        self.log("train/loss", loss, prog_bar=True, batch_size=x.size(0))
+        # x_seq: (B, S, C_in, H, W), y_true_norm_seq: (B, S, C_out, H, W)
+        x_seq, y_true_norm_seq = batch
+        
+        # y_pred_norm_seq: (B, S, C_out, H, W)
+        y_pred_norm_seq = self(x_seq) 
+        
+        batch_size, seq_len, c_out, h, w = y_pred_norm_seq.shape
+        
+        # Reshape for loss calculation: (B*S, C_out, H, W)
+        loss = self.criterion(
+            y_pred_norm_seq.reshape(batch_size * seq_len, c_out, h, w),
+            y_true_norm_seq.reshape(batch_size * seq_len, c_out, h, w)
+        )
+        # Log with batch_size representing number of sequences
+        self.log("train/loss", loss, prog_bar=True, batch_size=batch_size) 
         return loss
 
     def validation_step(self, batch, batch_idx):
-        x, y_true_norm = batch
-        y_pred_norm = self(x)
-        loss = self.criterion(y_pred_norm, y_true_norm)
-        self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True, batch_size=x.size(0), sync_dist=True)
+        # x_seq: (B, S, C_in, H, W), y_true_norm_seq: (B, S, C_out, H, W)
+        x_seq, y_true_norm_seq = batch
+        
+        # y_pred_norm_seq: (B, S, C_out, H, W)
+        y_pred_norm_seq = self(x_seq)
 
-        # Save unnormalized outputs for decadal mean/stddev calculation in validation_epoch_end
-        y_pred_norm = self.normalizer.inverse_transform_output(y_pred_norm.cpu().numpy())
-        y_true_norm = self.normalizer.inverse_transform_output(y_true_norm.cpu().numpy())
-        self.validation_step_outputs.append((y_pred_norm, y_true_norm))
+        batch_size, seq_len, c_out, h, w = y_pred_norm_seq.shape
+
+        # Reshape for loss calculation
+        loss = self.criterion(
+            y_pred_norm_seq.reshape(batch_size * seq_len, c_out, h, w),
+            y_true_norm_seq.reshape(batch_size * seq_len, c_out, h, w),
+        )
+        self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size, sync_dist=True)
+
+        # Denormalize and reshape for storage
+        # Flatten for normalizer: (B*S, C_out, H, W)
+        y_pred_norm_flat = y_pred_norm_seq.reshape(batch_size * seq_len, c_out, h, w).cpu().numpy()
+        y_true_norm_flat = y_true_norm_seq.reshape(batch_size * seq_len, c_out, h, w).cpu().numpy()
+
+        y_pred_unnorm_flat = self.normalizer.inverse_transform_output(y_pred_norm_flat)
+        y_true_unnorm_flat = self.normalizer.inverse_transform_output(y_true_norm_flat)
+        
+        # Append the flat (non-sequential) denormalized arrays for epoch end calculation
+        self.validation_step_outputs.append((y_pred_unnorm_flat, y_true_unnorm_flat))
 
         return loss
 
@@ -448,9 +501,13 @@ class ClimateEmulationModule(pl.LightningModule):
         if not self.validation_step_outputs:
             return
 
-        # Stack all predictions and ground truths
+        # Concatenate all predictions and ground truths
+        # Each element in validation_step_outputs is ( (B*S,C,H,W), (B*S,C,H,W) )
         all_preds_np = np.concatenate([pred for pred, _ in self.validation_step_outputs], axis=0)
         all_trues_np = np.concatenate([true for _, true in self.validation_step_outputs], axis=0)
+        
+        # Ensure that the total number of samples matches what _evaluate_predictions expects.
+        # This should now be (Total_Individual_Timesteps, C, H, W)
 
         # Use the helper method to evaluate predictions
         self._evaluate_predictions(all_preds_np, all_trues_np, is_test=False)
@@ -458,23 +515,44 @@ class ClimateEmulationModule(pl.LightningModule):
         self.validation_step_outputs.clear()  # Clear the outputs list for next epoch
 
     def test_step(self, batch, batch_idx):
-        x, y_true_denorm = batch
-        y_pred_norm = self(x)
-        # Denormalize the predictions for evaluation back to original scale
-        y_pred_denorm = self.normalizer.inverse_transform_output(y_pred_norm.cpu().numpy())
-        y_true_denorm_np = y_true_denorm.cpu().numpy()
-        self.test_step_outputs.append((y_pred_denorm, y_true_denorm_np))
+        # x_seq: (B, S, C_in, H, W), y_true_denorm_seq: (B, S, C_out, H, W)
+        x_seq, y_true_denorm_seq = batch
+        
+        # y_pred_norm_seq: (B, S, C_out, H, W)
+        y_pred_norm_seq = self(x_seq) 
+
+        batch_size, seq_len, c_out, h, w = y_pred_norm_seq.shape
+        
+        # Denormalize the predictions
+        # Flatten for normalizer: (B*S, C_out, H, W)
+        y_pred_norm_flat = y_pred_norm_seq.reshape(batch_size * seq_len, c_out, h, w).cpu().numpy()
+        y_pred_denorm_flat = self.normalizer.inverse_transform_output(y_pred_norm_flat)
+        
+        # Reshape y_true_denorm_seq for consistency if needed, or it might already be (B*S, C,H,W)
+        # depending on how test_dataset yields it (output_is_normalized=False means raw outputs)
+        y_true_denorm_flat = y_true_denorm_seq.reshape(batch_size * seq_len, c_out, h, w).cpu().numpy()
+        
+        # Append the flat (non-sequential) denormalized arrays
+        self.test_step_outputs.append((y_pred_denorm_flat, y_true_denorm_flat))
 
     def on_test_epoch_end(self):
+        if not self.test_step_outputs:
+            log.info("No test outputs to process.")
+            return
+
         # Concatenate all predictions and ground truths from each test step/batch into one array
+        # Each element in test_step_outputs is ( (B*S,C,H,W), (B*S,C,H,W) )
         all_preds_denorm = np.concatenate([pred for pred, true in self.test_step_outputs], axis=0)
         all_trues_denorm = np.concatenate([true for pred, true in self.test_step_outputs], axis=0)
+        
+        # This should now be (Total_Individual_Timesteps, C, H, W)
 
         # Use the helper method to evaluate predictions
         self._evaluate_predictions(all_preds_denorm, all_trues_denorm, is_test=True)
 
-        # Save predictions for Kaggle submission. This is the file that should be uploaded to Kaggle.
+        # Save predictions for Kaggle submission.
         log.info("Saving Kaggle submission...")
+        # _save_kaggle_submission expects (time, channels, y, x)
         self._save_kaggle_submission(all_preds_denorm)
 
         self.test_step_outputs.clear()  # Clear the outputs list
