@@ -17,7 +17,7 @@ import subprocess
 import sys
 
 
-def run_sweep(n_trials=20, max_epochs=3):
+def run_sweep(n_trials=30, max_epochs=10):
     """Run an Optuna hyperparameter sweep with the specified number of trials and epochs."""
     
     # Build the sweep command with direct parameter overrides
@@ -27,27 +27,27 @@ def run_sweep(n_trials=20, max_epochs=3):
         f"hydra.sweeper.n_trials={n_trials}",
         f"trainer.max_epochs={max_epochs}",
         # Force matplotlib to use Agg backend in subprocess too
-        "MPLBACKEND=Agg" 
+        "+MPLBACKEND=Agg" 
     ]
     
     # Parameters to sweep over
     sweep_params = [
         # Data Parameters
-        "data.sequence_length=6,12,18,24",
-        "data.batch_size=8,16,32",
+        "data.sequence_length=range(3, 37)",
+        "data.batch_size=range(2, 17)",
         
         # LSTM Parameters
-        "model.lstm_hidden_dim=64,128,256,512",
-        "model.n_lstm_layers=1,2,3",
+        "model.lstm_hidden_dim=range(8, 513)",
+        "model.n_lstm_layers=1,2,3,4",
         "model.lstm_dropout=0.1,0.2,0.3,0.5",
         
         # CNN Parameters
-        "model.cnn_init_dim=32,64,128",
-        "model.cnn_depth=2,3,4",
+        "model.cnn_init_dim=range(10, 200)",
+        "model.cnn_depth=1,2,3,4",
         "model.cnn_dropout_rate=0.1,0.2,0.3,0.5",
         
         # Training Parameters
-        "training.lr=5e-5,1e-4,5e-4,1e-3,5e-3"
+        "training.lr=1e-5,5e-5,1e-4,5e-4,1e-3,5e-3,1e-2,5e-2"
     ]
     
     # Add sweep parameters to command

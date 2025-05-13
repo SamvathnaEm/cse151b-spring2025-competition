@@ -5,7 +5,8 @@ sampler:
   _target_: optuna.samplers.TPESampler
   seed: 123
 direction: minimize
-storage: null
+storage: sqlite:///optuna_studies.db
+study_name: climate_model_optimization
 n_trials: 20
 n_jobs: 1
 
