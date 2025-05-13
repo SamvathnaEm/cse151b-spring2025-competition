@@ -17,6 +17,9 @@ from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset
 
 
+torch.use_deterministic_algorithms(True, warn_only=True)
+
+
 try:
     import wandb  # Optional, for logging to Weights & Biases
 except ImportError:
@@ -354,8 +357,6 @@ class ClimateEmulationModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y_true_norm = batch
         y_pred_norm = self(x)
-        if y_true_norm.ndim == 5:
-            y_true_norm = y_true_norm.mean(dim=1)
         loss = self.criterion(y_pred_norm, y_true_norm)
         self.log("train/loss", loss, prog_bar=True, batch_size=x.size(0))
         return loss
@@ -363,8 +364,6 @@ class ClimateEmulationModule(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, y_true_norm = batch
         y_pred_norm = self(x)
-        if y_true_norm.ndim == 5:
-            y_true_norm = y_true_norm.mean(dim=1)
         loss = self.criterion(y_pred_norm, y_true_norm)
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True, batch_size=x.size(0), sync_dist=True)
 
@@ -476,11 +475,16 @@ class ClimateEmulationModule(pl.LightningModule):
             return
 
         # Stack all predictions and ground truths
-        all_preds_np = np.concatenate([pred for pred, _ in self.validation_step_outputs], axis=0)
-        all_trues_np = np.concatenate([true for _, true in self.validation_step_outputs], axis=0)
+        raw_preds = np.concatenate([pred for pred, _ in self.validation_step_outputs], axis=0)
+        raw_trues = np.concatenate([true for _, true in self.validation_step_outputs], axis=0)
+    
+        # 2. Flatten (batch × seq_len) into a single time axis
+        b, t, c, h, w = raw_preds.shape
+        preds_flat = raw_preds.reshape(b * t, c, h, w)
+        trues_flat = raw_trues.reshape(b * t, c, h, w)
 
         # Use the helper method to evaluate predictions
-        self._evaluate_predictions(all_preds_np, all_trues_np, is_test=False)
+        self._evaluate_predictions(preds_flat, trues_flat, is_test=False)
 
         self.validation_step_outputs.clear()  # Clear the outputs list for next epoch
 
@@ -490,26 +494,21 @@ class ClimateEmulationModule(pl.LightningModule):
         # Denormalize predictions
         y_pred_denorm = self.normalizer.inverse_transform_output(y_pred_norm.cpu().numpy())
     
-        # Reduce target to match prediction shape
-        if y_true_denorm.ndim == 5:
-            y_true_denorm = y_true_denorm.mean(dim=1)
     
         y_true_denorm_np = y_true_denorm.cpu().numpy()
         self.test_step_outputs.append((y_pred_denorm, y_true_denorm_np))
 
     def on_test_epoch_end(self):
         # Concatenate all predictions and ground truths from each test step/batch into one array
-        all_preds_denorm = np.concatenate([pred for pred, true in self.test_step_outputs], axis=0)
-        all_trues_denorm = np.concatenate([true for pred, true in self.test_step_outputs], axis=0)
+        raw_preds = np.concatenate([p for p, _ in self.test_step_outputs], axis=0)
+        raw_trues = np.concatenate([t for _, t in self.test_step_outputs], axis=0)
 
-        # Use the helper method to evaluate predictions
-        self._evaluate_predictions(all_preds_denorm, all_trues_denorm, is_test=True)
+        b, t, c, h, w = raw_preds.shape
+        preds_flat = raw_preds.reshape(b * t, c, h, w)
+        trues_flat = raw_trues.reshape(b * t, c, h, w)
 
-        # Save predictions for Kaggle submission. This is the file that should be uploaded to Kaggle.
-        log.info("Saving Kaggle submission...")
-        self._save_kaggle_submission(all_preds_denorm)
-
-        self.test_step_outputs.clear()  # Clear the outputs list
+        self._evaluate_predictions(preds_flat, trues_flat, is_test=True)
+        self.test_step_outputs.clear()
 
     def _save_kaggle_submission(self, predictions, suffix=""):
         """

@@ -114,62 +114,50 @@ class CNN_LSTM(nn.Module):
         n_output_channels,
         kernel_size=3,
         base_dim=64,
-        lstm_hidden=2,
+        lstm_hidden=512,
         num_lstm_layers=2
     ):
         super().__init__()
         self.encoder2d = nn.Sequential(
-            ResidualBlock(n_input_channels, base_dim),
-            nn.Conv2d(base_dim, base_dim * 2, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(base_dim * 2),
-            nn.ReLU(inplace=True)
+            nn.Conv2d(n_input_channels, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU()
         )
         
-    # Compute flattened spatial feature size after one 2× downsample
-        self.H2 = 48 // 2
-        self.W2 = 72  // 2
-        self.D  = base_dim * 2
-        self.feat_size = self.D * self.H2 * self.W2
+        # Adaptive pooling to standardize spatial dim
+        self.pool = nn.AvgPool2d(kernel_size=(6, 6), stride=(6, 6))  # deterministic
 
-        # 2) Temporal model
+        # Flattened feature size after pooling
+        pooled_h, pooled_w = 48 // 6, 72 // 6
+        spatial_feat_size = 128 * pooled_h * pooled_w
+
+        # LSTM for temporal modeling
         self.lstm = nn.LSTM(
-            input_size=self.feat_size,
+            input_size=spatial_feat_size,
             hidden_size=lstm_hidden,
             num_layers=num_lstm_layers,
-            batch_first=True,
-        )
-        self.fc = nn.Linear(lstm_hidden, self.feat_size)
+            batch_first=True
+        ) 
 
-        # 3) Spatial decoder
-        self.decoder2d = nn.Sequential(
-            ResidualBlock(self.D, self.D),
-            nn.ConvTranspose2d(self.D, base_dim, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.BatchNorm2d(base_dim),
-            nn.ReLU(inplace=True),
-        )
-
-        # 4) Final head to\ output variables
-        self.head = nn.Conv2d(base_dim, n_output_channels, kernel_size=1)
+        # MLP Head
+        self.fc = nn.Linear(lstm_hidden, n_output_channels * 48 * 72)
 
     def forward(self, x):
         B, T, C, H, W = x.shape
-        # Encode each time slice
-        seq_feats = []
-        for t in range(T):
-            f = self.encoder2d(x[:, t])         # → (B, D, H2, W2)
-            seq_feats.append(f.view(B, -1))     # → (B, feat_size)
+        x = x.view(B * T, C, H, W)
 
-        seq = torch.stack(seq_feats, dim=1)     # → (B, T, feat_size)
+        features = self.encoder2d(x)
+        features = self.pool(features)  # [B*T, 128, 8, 16]
+        features = features.view(B, T, -1)  # [B, T, 128*8*16]
 
-        # LSTM + re‐expand
-        out_seq, _ = self.lstm(seq)             # → (B, T, lstm_hidden)
-        recon = self.fc(out_seq)                # → (B, T, feat_size)
+        # Temporal modeling
+        lstm_out, _ = self.lstm(features)  # [B, T, hidden_dim]
 
-        # Decode per time step
-        preds = []
-        for t in range(T):
-            f2 = recon[:, t].view(B, self.D, self.H2, self.W2)
-            p  = self.decoder2d(f2)             # → (B, base_dim, H, W)
-            preds.append(self.head(p))          # → (B, n_output, H, W)
-
-        return torch.stack(preds, dim=1).mean(dim=1)
+        # Output projection
+        out = self.fc(lstm_out)  # [B, T, out_channels * H * W]
+        out = out.view(B, T, 2, 48, 72)  # [B, T, 2, H, W]
+        return out
