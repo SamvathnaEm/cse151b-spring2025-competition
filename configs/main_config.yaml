@@ -14,7 +14,9 @@ seed: 42
 use_wandb: true
 wandb_project: "cse-151b-competition"
 wandb_entity: "saem-uc-san-diego"
-run_name: ${model.type}-lr_${training.lr}-seqlen_${data.sequence_length}-lstmhd_${model.lstm_hidden_dim}
+run_name: Optuna_${model.type}-lr_${training.lr}-seq_${data.sequence_length}-lstmhd_${model.lstm_hidden_dim}-cnndpth_${model.cnn_depth}
+wandb_tags: ["optuna_sweep", "CNNLSTM_Project"]
+wandb_group: "Optuna_Sweep_CNNLSTM_V1"
 
 # Path to a checkpoint to load. If set, will load this checkpoint and resume training (evaluation)
 ckpt_path: null
@@ -25,25 +27,67 @@ hydra:
   run:
     dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra.job.override_dirname}
   sweep:
-    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra.job.override_dirname}
-    subdir: ${hydra.job.num}
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}_${hydra.job.override_dirname}
   
-  # Sweeper configuration for Random Search
+  # Optuna Sweeper Configuration
   sweeper:
-    _target_: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
-    max_batch_size: null # Run all jobs in parallel if launcher supports it
-    params:
-      # Syntax for overriding parameters for sweep:
-      # parameter_to_sweep: value1,value2  (for grid search over these values)
-      # parameter_to_sweep: choice(value1, value2, value3) (random choice)
-      # parameter_to_sweep: range(start, stop, step) (integer range)
-      # parameter_to_sweep: interval(start, stop) (float interval, requires Optuna for good sampling)
+    _target_: hydra_plugins.hydra_optuna_sweeper.optuna_sweeper.OptunaSweeper
+    # The metric to optimize, corresponds to the value returned by the objective (main script)
+    # PyTorch Lightning trainer.fit() returns None, but EarlyStopping/ModelCheckpoint save the best metric.
+    # The Optuna sweeper for Hydra typically relies on the script returning the value to be optimized.
+    # We need to ensure our main script returns the metric (e.g., best val_loss).
+    # For now, we assume it picks up the ModelCheckpoint 'monitor' or EarlyStopping 'monitor'.
+    # If not, main.py would need modification to return the metric value.
+    direction: minimize 
+    study_name: cnnlstm_climate_emulation
+    storage: null # In-memory storage, for SQLite use: "sqlite:///optuna_study.db"
+    n_trials: 50  # Number of trials to run (adjust as needed)
+    n_jobs: 1     # Number of parallel jobs (set to >1 if your machine/launcher supports it)
+    #sampler: default # Default is TPESampler, or configure explicitly:
+    sampler:
+      _target_: optuna.samplers.TPESampler
+      seed: ${seed} # Use global seed for reproducibility of sampling process
+      #consider_prior: true
+      #prior_weight: 1.0
+      #n_startup_trials: 10 # Number of random trials before TPE starts
 
-      # Example Sweep Parameters (adjust these to your needs):
-      training.lr: choice(0.001, 0.0005, 0.0001)
-      data.sequence_length: choice(6, 12, 18)
-      model.lstm_hidden_dim: choice(64, 128, 256)
-      # Add other parameters you want to sweep, e.g.:
-      # model.cnn_depth: choice(2, 3, 4)
-      # model.n_lstm_layers: choice(1, 2)
-      # model.lstm_dropout: choice(0.1, 0.2, 0.3)
+    # Pruner (optional, requires callback integration in main.py)
+    # pruner:
+    #   _target_: optuna.pruners.MedianPruner
+    #   n_startup_trials: 5
+    #   n_warmup_steps: 0
+    #   interval_steps: 1
+
+    # Define the search space for hyperparameters
+    params:
+      training.lr:
+        type: float
+        low: 0.00001
+        high: 0.001
+        log: true # Logarithmic scale for learning rate
+      data.sequence_length:
+        type: categorical
+        choices: [6, 12, 18, 24]
+      model.lstm_hidden_dim:
+        type: categorical
+        choices: [32, 64, 128, 256]
+      model.n_lstm_layers:
+        type: int
+        low: 1
+        high: 3
+      model.lstm_dropout:
+        type: float
+        low: 0.0
+        high: 0.5
+        step: 0.1
+      model.cnn_init_dim:
+        type: categorical
+        choices: [32, 64]
+      model.cnn_depth:
+        type: int
+        low: 2
+        high: 4
+      # data.batch_size: # Be careful with batch_size due to memory constraints
+      #   type: categorical
+      #   choices: [8, 16]

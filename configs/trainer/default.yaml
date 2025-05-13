@@ -1,6 +1,6 @@
 # @package _global_.trainer
 
-max_epochs: 15  # Specific number of epochs
+max_epochs: 25  # Specific number of epochs
 accelerator: auto  # Will be auto-detected in code
 devices: auto  # Will be auto-detected in code
 deterministic: true
@@ -22,7 +22,7 @@ callbacks:
     logging_interval: "epoch"
   - _target_: lightning.pytorch.callbacks.EarlyStopping # NEWLY ADDED CALLBACK
     monitor: val/loss  # Metric to monitor
-    patience: 7        # Number of epochs with no improvement after which training will be stopped.
+    patience: 4        # Number of epochs with no improvement after which training will be stopped.
     mode: min          # Stop training when the monitored metric has stopped decreasing.
     verbose: True      # Print a message when early stopping is triggered.
 
