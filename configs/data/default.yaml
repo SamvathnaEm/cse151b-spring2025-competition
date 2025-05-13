@@ -22,7 +22,7 @@ train_ssps:
 test_ssp: "ssp245"
 test_months: 360
 eval_batch_size: null
-sequence_length: 12
+sequence_length: 11
 batch_size: 8
 num_workers: 4
 output_height: 48   # NEW (or ensure get_model defaults are fine)

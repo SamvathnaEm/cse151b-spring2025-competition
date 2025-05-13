@@ -5,7 +5,7 @@ defaults:
   - model: cnnlstm
   - training: default
   - trainer: default
-  - override hydra/sweeper: optuna
+  # The sweeper will be explicitly provided via command line with -m
   - _self_
 
 # Global configs
@@ -15,10 +15,10 @@ seed: 42
 use_wandb: true
 wandb_project: "cse-151b-competition"
 wandb_entity: "saem-uc-san-diego"
-run_name: "CNNLSTM_seq${data.sequence_length}_lstm${model.lstm_hidden_dim}_cnn${model.cnn_depth}_lr${training.lr}"
+run_name: "AI_CNNLSTM_seq${data.sequence_length}_lstm${model.lstm_hidden_dim}_cnn${model.cnn_depth}_lr${training.lr}"
 wandb_group: "Hyperparameter_Sweep"
 
-# Optuna metric to optimize - Hydra will pass this to the sweeper
+# Optuna metric to optimize
 optimized_metric: val/loss
 
 # Path to a checkpoint to load. If set, will load this checkpoint and resume training (evaluation)
@@ -32,9 +32,3 @@ hydra:
   sweep:
     dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra.job.name}
     subdir: ${hydra.job.num}
-  sweeper:
-    study_name: cnnlstm_optuna_study
-    storage: null  # Use in-memory storage
-    direction: minimize
-    n_trials: 20  # Number of trials to run
-    n_jobs: 1     # Run 1 trial at a time (change to run multiple trials in parallel)

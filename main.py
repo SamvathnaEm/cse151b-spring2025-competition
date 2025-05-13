@@ -1,6 +1,10 @@
 import os
 from datetime import datetime
 
+# Force matplotlib to use non-interactive backend to prevent Tkinter errors
+import os
+os.environ['MPLBACKEND'] = 'Agg'
+
 import dask.array as da
 import hydra
 import lightning.pytorch as pl

@@ -1,45 +1,23 @@
 # @package hydra.sweeper
 
-_target_: hydra._internal.sweeper.optuna.OptunaSweeper
+_target_: hydra.sweeper.optuna._OptunaSweeper
 sampler:
   _target_: optuna.samplers.TPESampler
   seed: 123
 direction: minimize
-study_name: optuna_sweep
 storage: null
 n_trials: 20
 n_jobs: 1
-max_failure_rate: 0.0
 
+# Parameter notation for command line will be different
+# These settings are just the defaults if not overridden by command line
 params:
-  # Data Parameters - Temporal Context
-  # For climate data, longer sequences can better capture seasonal patterns and long-term trends
   data.sequence_length: choice(6, 12, 18, 24)
-
-  # Batch Size - Balancing between memory and optimization dynamics
-  data.batch_size: choice(8, 16, 32)  # Larger batches if memory allows
-
-  # LSTM Parameters - Critical for temporal dynamics in climate prediction
-  # Hidden dimension affects the model's capacity to model complex climate temporal dependencies
+  data.batch_size: choice(8, 16, 32)
   model.lstm_hidden_dim: choice(64, 128, 256, 512)
-  
-  # Number of LSTM layers can help capture hierarchical temporal patterns
   model.n_lstm_layers: choice(1, 2, 3)
-  
-  # LSTM dropout for regularization
   model.lstm_dropout: choice(0.1, 0.2, 0.3, 0.5)
-  
-  # CNN Backbone Parameters - Important for spatial feature extraction
-  # Initial dimension affects the model's capacity to extract initial spatial features
   model.cnn_init_dim: choice(32, 64, 128)
-  
-  # Depth determines how many spatial scales the model can process
   model.cnn_depth: choice(2, 3, 4)
-  
-  # CNN dropout for regularization
   model.cnn_dropout_rate: choice(0.1, 0.2, 0.3, 0.5)
-
-  # Training Parameters
-  # Learning rate significantly affects training stability and convergence
-  # We use a logarithmic scale to explore a wide range
   training.lr: choice(5e-5, 1e-4, 5e-4, 1e-3, 5e-3) 

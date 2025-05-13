@@ -199,3 +199,5 @@ videos/**
 .vscode/*
 CONTEXT.md
 *.md
+/multirun
+/submissions
