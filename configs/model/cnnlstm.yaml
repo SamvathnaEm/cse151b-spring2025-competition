@@ -4,14 +4,14 @@
     
     # Parameters for the CNN backbone (SimpleCNN)
     cnn_kernel_size: 3
-    cnn_init_dim: 64
-    cnn_depth: 4
-    cnn_dropout_rate: 0.2 # Dropout within SimpleCNN's final layers if used standalone
+    cnn_init_dim: 32
+    cnn_depth: 2
+    cnn_dropout_rate: 0.5 # Dropout within SimpleCNN's final layers if used standalone
     
     # Parameters for the LSTM
-    lstm_hidden_dim: 256 # Example value, tune as needed
+    lstm_hidden_dim: 64 # Example value, tune as needed
     n_lstm_layers: 2     # Example value
-    lstm_dropout: 0.2    # Dropout for LSTM layers (if n_lstm_layers > 1)
+    lstm_dropout: 0.5    # Dropout for LSTM layers (if n_lstm_layers > 1)
     
     # output_height and output_width are passed by get_model from data config
     # n_input_channels and n_output_channels are also passed by get_model

@@ -14,7 +14,7 @@ seed: 42
 use_wandb: true
 wandb_project: "cse-151b-competition"
 wandb_entity: "saem-uc-san-diego"
-run_name: "Gemini2.5_CNNLSTM_Test"
+run_name: ${model.type}-lr_${training.lr}-seqlen_${data.sequence_length}-lstmhd_${model.lstm_hidden_dim}
 
 # Path to a checkpoint to load. If set, will load this checkpoint and resume training (evaluation)
 ckpt_path: null
@@ -23,4 +23,27 @@ hydra:
   job:
     chdir: true
   run:
-    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra.job.override_dirname}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra.job.override_dirname}
+    subdir: ${hydra.job.num}
+  
+  # Sweeper configuration for Random Search
+  sweeper:
+    _target_: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
+    max_batch_size: null # Run all jobs in parallel if launcher supports it
+    params:
+      # Syntax for overriding parameters for sweep:
+      # parameter_to_sweep: value1,value2  (for grid search over these values)
+      # parameter_to_sweep: choice(value1, value2, value3) (random choice)
+      # parameter_to_sweep: range(start, stop, step) (integer range)
+      # parameter_to_sweep: interval(start, stop) (float interval, requires Optuna for good sampling)
+
+      # Example Sweep Parameters (adjust these to your needs):
+      training.lr: choice(0.001, 0.0005, 0.0001)
+      data.sequence_length: choice(6, 12, 18)
+      model.lstm_hidden_dim: choice(64, 128, 256)
+      # Add other parameters you want to sweep, e.g.:
+      # model.cnn_depth: choice(2, 3, 4)
+      # model.n_lstm_layers: choice(1, 2)
+      # model.lstm_dropout: choice(0.1, 0.2, 0.3)

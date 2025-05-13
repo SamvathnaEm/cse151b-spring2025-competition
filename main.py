@@ -590,7 +590,22 @@ class ClimateEmulationModule(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
-        return optimizer
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='min',      # Reduce LR when the monitored quantity has stopped decreasing
+            factor=0.5,      # Factor by which the learning rate will be reduced. new_lr = lr * factor
+            patience=3,      # Number of epochs with no improvement after which learning rate will be reduced
+            verbose=True     # If True, prints a message to stdout for each update
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "val/loss", # Metric to monitor
+                "interval": "epoch",
+                "frequency": 1,
+            },
+        }
 
 
 # --- Main Execution with Hydra ---
