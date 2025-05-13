@@ -15,7 +15,8 @@ seed: 42
 use_wandb: true
 wandb_project: "cse-151b-competition"
 wandb_entity: "saem-uc-san-diego"
-run_name: "Optuna_CNNLSTM_Sweep"
+run_name: "CNNLSTM_seq${data.sequence_length}_lstm${model.lstm_hidden_dim}_cnn${model.cnn_depth}_lr${training.lr}"
+wandb_group: "Hyperparameter_Sweep"
 
 # Optuna metric to optimize - Hydra will pass this to the sweeper
 optimized_metric: val/loss
