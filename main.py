@@ -594,7 +594,7 @@ class ClimateEmulationModule(pl.LightningModule):
             optimizer,
             mode='min',      # Reduce LR when the monitored quantity has stopped decreasing
             factor=0.5,      # Factor by which the learning rate will be reduced. new_lr = lr * factor
-            patience=4,      # Number of epochs with no improvement after which learning rate will be reduced
+            patience=3,      # Number of epochs with no improvement after which learning rate will be reduced
             verbose=True     # If True, prints a message to stdout for each update
         )
         return {
@@ -635,6 +635,9 @@ def main(cfg: DictConfig):
     trainer.fit(lightning_module, datamodule=datamodule, ckpt_path=cfg.ckpt_path)
     log.info("Training finished.")
 
+    # Get validation metrics
+    results = trainer.callback_metrics
+    
     # Test model
     # IMPORTANT: Please note that the test metrics will be bad because the test targets have been corrupted on the public Kaggle dataset.
     # The purpose of testing below is to generate the Kaggle submission file based on your model's predictions.
@@ -644,6 +647,15 @@ def main(cfg: DictConfig):
 
     if cfg.use_wandb and isinstance(trainer_config.get("logger"), WandbLogger):
         wandb.finish()  # Finish the run if using wandb
+    
+    # Return validation metric for Optuna optimization
+    optimized_metric = results.get("val/loss")
+    if optimized_metric is not None:
+        log.info(f"Optimization metric (val/loss): {optimized_metric:.6f}")
+        return float(optimized_metric)
+    else:
+        log.warning("val/loss metric not found in results. Returning placeholder value for Optuna.")
+        return float("inf")  # If val/loss doesn't exist, return infinity to discourage this setting
 
 
 if __name__ == "__main__":
