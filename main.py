@@ -339,10 +339,9 @@ class ClimateEmulationDataModule(LightningDataModule):
 
 # --- PyTorch Lightning Module ---
 class ClimateEmulationModule(pl.LightningModule):
-    def __init__(self, model: nn.Module, learning_rate: float):
+    def __init__(self, model: nn.Module, learning_rate: float, weight_decay: float = 0.0):
         super().__init__()
         self.model = model
-        # Access hyperparams via self.hparams object after saving, e.g., self.hparams.learning_rate
         self.save_hyperparameters(ignore=["model"])
         self.criterion = nn.MSELoss()
         self.normalizer = None
@@ -593,7 +592,11 @@ class ClimateEmulationModule(pl.LightningModule):
         log.info(f"Kaggle submission saved to {filepath}")
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+        optimizer = optim.Adam(
+            self.parameters(),
+            lr=self.hparams.learning_rate,
+            weight_decay=self.hparams.weight_decay
+        )
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode='min',      # Reduce LR when the monitored quantity has stopped decreasing
@@ -626,7 +629,11 @@ def main(cfg: DictConfig):
     model = get_model(cfg)
 
     # Create lightning module
-    lightning_module = ClimateEmulationModule(model, learning_rate=cfg.training.lr)
+    lightning_module = ClimateEmulationModule(
+        model,
+        learning_rate=cfg.training.lr,
+        weight_decay=cfg.training.weight_decay
+    )
 
     # Create lightning trainer
     trainer_config = get_trainer_config(cfg, model=model)

@@ -1,3 +1,4 @@
 # @package _global_.training
 
 lr: 5e-4
+weight_decay: 0.0001
