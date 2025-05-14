@@ -114,7 +114,13 @@ def get_trainer_config(cfg: DictConfig, model=None) -> Dict[str, Any]:
     if cfg.use_wandb:
         if not cfg.wandb_entity or not cfg.wandb_project:
             raise ValueError("wandb_entity and wandb_project required if use_wandb is true.")
-        logger = WandbLogger(project=cfg.wandb_project, entity=cfg.wandb_entity, name=cfg.run_name, log_model=False)
+        logger = WandbLogger(
+            project=cfg.wandb_project, 
+            entity=cfg.wandb_entity, 
+            name=cfg.run_name,
+            group=cfg.wandb_group,
+            log_model=False
+        )
         # Log hyperparameters
         logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
         if model is not None:

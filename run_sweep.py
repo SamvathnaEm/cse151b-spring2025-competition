@@ -17,7 +17,7 @@ import subprocess
 import sys
 
 
-def run_sweep(n_trials=30, max_epochs=10):
+def run_sweep(n_trials=50, max_epochs=20):
     """Run an Optuna hyperparameter sweep with the specified number of trials and epochs."""
     
     # Build the sweep command with direct parameter overrides
@@ -32,22 +32,24 @@ def run_sweep(n_trials=30, max_epochs=10):
     
     # Parameters to sweep over
     sweep_params = [
-        # Data Parameters
-        "data.sequence_length=range(3, 37)",
-        "data.batch_size=range(2, 17)",
+        # Data Parameters - For climate, sequence length is particularly important 
+        "data.sequence_length=choice(3,6,12,18,24,36)",  # Climate-relevant timescales (months)
+        "data.batch_size=choice(2,4,8)",  # Smaller batches to avoid OOM
         
-        # LSTM Parameters
-        "model.lstm_hidden_dim=range(8, 513)",
-        "model.n_lstm_layers=1,2,3,4",
-        "model.lstm_dropout=0.1,0.2,0.3,0.5",
+        # LSTM Parameters - For temporal patterns
+        "model.lstm_hidden_dim=choice(32,64,128,256)",  # Powers of 2 for efficiency
+        "model.n_lstm_layers=range(1,3)",  # Stack depth for temporal processing
+        "model.lstm_dropout=interval(0.1, 0.5)",  # Continuous dropout range
         
-        # CNN Parameters
-        "model.cnn_init_dim=range(10, 200)",
-        "model.cnn_depth=1,2,3,4",
-        "model.cnn_dropout_rate=0.1,0.2,0.3,0.5",
+        # CNN Parameters - For spatial patterns
+        "model.cnn_init_dim=choice(16,32,64,128)",  # Powers of 2 for efficiency
+        "model.cnn_depth=choice(1,2,3)",  # Reduced to avoid OOM
+        "model.cnn_dropout_rate=interval(0.1, 0.5)",  # Continuous dropout
+        "model.cnn_kernel_size=choice(3,5,7)",  # New! Different kernel sizes for spatial context
         
         # Training Parameters
-        "training.lr=1e-5,5e-5,1e-4,5e-4,1e-3,5e-3,1e-2,5e-2"
+        "training.lr=interval(1e-6, 1e-2)",  # Log-scale for learning rate
+        "trainer.callbacks.2.patience=range(2,11)",  # New! Early stopping patience
     ]
     
     # Add sweep parameters to command
@@ -71,8 +73,8 @@ def run_sweep(n_trials=30, max_epochs=10):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run hyperparameter optimization sweep")
-    parser.add_argument("--trials", type=int, default=20, help="Number of trials to run")
-    parser.add_argument("--epochs", type=int, default=3, help="Maximum epochs per trial")
+    parser.add_argument("--trials", type=int, default=100, help="Number of trials to run")
+    parser.add_argument("--epochs", type=int, default=15, help="Maximum epochs per trial")
     args = parser.parse_args()
     
     run_sweep(n_trials=args.trials, max_epochs=args.epochs) 
