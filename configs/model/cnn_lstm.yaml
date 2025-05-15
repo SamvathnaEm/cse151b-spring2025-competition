@@ -6,5 +6,5 @@ type: cnn_lstm
 # Model architecture parameters
 kernel_size: 3
 base_dim: 64
-lstm_hidden: 2
+lstm_hidden: 4
 num_lstm_layers: 2
