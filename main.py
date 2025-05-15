@@ -652,8 +652,8 @@ class ClimateEmulationModule(pl.LightningModule):
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode='min',      # Reduce LR when the monitored quantity has stopped decreasing
-            factor=0.5,      # Factor by which the learning rate will be reduced. new_lr = lr * factor
-            patience=3,      # Number of epochs with no improvement after which learning rate will be reduced
+            factor=0.25,      # Factor by which the learning rate will be reduced. new_lr = lr * factor
+            patience=5,      # Number of epochs with no improvement after which learning rate will be reduced
             verbose=True     # If True, prints a message to stdout for each update
         )
         return {
