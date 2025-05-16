@@ -24,6 +24,6 @@ train_ssps:
 test_ssp: "ssp245"
 test_months: 360
 
-batch_size: 32
+batch_size: 64
 num_workers: 4
-seq_len: 10
+seq_len: 12

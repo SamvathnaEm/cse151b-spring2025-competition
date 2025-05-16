@@ -587,7 +587,7 @@ def main(cfg: DictConfig):
     # Add early stopping callback
     early_stopping_callback = pl.callbacks.EarlyStopping(
         monitor='val/loss',       # Monitor validation loss
-        patience=10,              # Stop after 10 epochs without improvement
+        patience=15,              # Stop after 10 epochs without improvement
         mode='min',               # Minimize the monitored metric
         verbose=True              # Print when stopping
     )
