@@ -47,21 +47,40 @@ log = get_logger(__name__)
 class ClimateDataset(Dataset):
     def __init__(self, inputs_norm_dask, outputs_dask, seq_len=1, output_is_normalized=True, training = False):
         self.seq_len = seq_len
-        total_time = inputs_norm_dask.shape[0]
         self.training = training
-        self.size = total_time - seq_len + 1 if seq_len > 1 else total_time
-        if self.size <= 0:
-            raise ValueError("Sequence length exceeds available time steps.")
+
+        if not self.training: # For val and test
+            self.size = outputs_dask.shape[0]
+            if self.seq_len > 1:
+                # Expect pre-lengthened inputs for val/test
+                expected_input_len = outputs_dask.shape[0] + self.seq_len - 1
+                if inputs_norm_dask.shape[0] < expected_input_len:
+                    raise ValueError(
+                        f"Input data for non-training (val/test) with seq_len > 1 must be at least 'outputs_dask.shape[0] + seq_len - 1' ({expected_input_len}) long. "
+                        f"Got inputs_norm_dask.shape[0]={inputs_norm_dask.shape[0]}, outputs_dask.shape[0]={outputs_dask.shape[0]}, seq_len={self.seq_len}"
+                    )
+        else: # For training
+            self.size = inputs_norm_dask.shape[0] - self.seq_len + 1 if self.seq_len > 1 else inputs_norm_dask.shape[0]
+            if self.size <= 0:
+                raise ValueError(f"Sequence length ({self.seq_len}) for training exceeds available time steps ({inputs_norm_dask.shape[0]}). Effective samples: {self.size}")
+            # For training, inputs and outputs are assumed to be the same length initially when passed to constructor.
+            if inputs_norm_dask.shape[0] != outputs_dask.shape[0]:
+                # This is a deviation if training=True, as it implies outputs might not align for the "predict last of sequence" logic
+                log.warning(
+                    f"For training, inputs_norm_dask.shape[0] ({inputs_norm_dask.shape[0]}) and "
+                    f"outputs_dask.shape[0] ({outputs_dask.shape[0]}) are typically expected to be the same. "
+                    f"The dataset will produce {self.size} samples."
+                )
 
         log.info(
-            f"Creating dataset: {self.size} samples, input shape: {inputs_norm_dask.shape}, seq_len: {seq_len}, normalized output: {output_is_normalized}"
+            f"Creating dataset: {self.size} samples, input_raw_shape: {inputs_norm_dask.shape}, output_raw_shape: {outputs_dask.shape}, seq_len: {self.seq_len}, normalized output: {output_is_normalized}, training: {self.training}"
         )
 
         # Precompute tensors
         inputs_np = inputs_norm_dask.compute()
         outputs_np = outputs_dask.compute()
-        self.input_tensors = torch.from_numpy(inputs_np).float()  # (total_time, channels, y, x)
-        self.output_tensors = torch.from_numpy(outputs_np).float()  # (total_time, output_channels, y, x)
+        self.input_tensors = torch.from_numpy(inputs_np).float()
+        self.output_tensors = torch.from_numpy(outputs_np).float()
 
         if torch.isnan(self.input_tensors).any() or torch.isnan(self.output_tensors).any():
             raise ValueError("NaN values detected in dataset tensors")
@@ -69,18 +88,40 @@ class ClimateDataset(Dataset):
     def __len__(self):
         return self.size
 
-    def __getitem__(self, idx):
-        if self.seq_len == 1:
-            input_data = self.input_tensors[idx].unsqueeze(1)  # (channels, 1, y, x)
-            output_data = self.output_tensors[idx]  # (output_channels, y, x)
-        else:
-            start_idx = idx
-            end_idx = start_idx + self.seq_len
-            input_seq = self.input_tensors[start_idx:end_idx]  # (seq_len, channels, y, x)
-            input_data = input_seq.permute(1, 0, 2, 3)  # (channels, seq_len, y, x)
-            output_data = self.output_tensors[end_idx - 1]  # (output_channels, y, x)
+    def __getitem__(self, idx): # idx is 0 to self.size - 1
+        if not self.training: # For val and test (expects pre-lengthened inputs)
+            output_data = self.output_tensors[idx] # output_tensors has length e.g. 120 for val, 360 for test
+            
+            # Input sequence for this target.
+            # input_tensors is (output_len + seq_len - 1, ...)
+            # input_tensors[idx] is the first time step of the sequence for output_tensors[idx]
+            start_idx_in_inputs = idx 
+            end_idx_in_inputs = idx + self.seq_len
+            
+            if self.seq_len == 1:
+                # .unsqueeze(1) adds a temporal dimension of 1, so shape becomes (channels, 1, y, x)
+                input_data = self.input_tensors[start_idx_in_inputs].unsqueeze(1) 
+            else:
+                input_seq = self.input_tensors[start_idx_in_inputs:end_idx_in_inputs]  # (seq_len, channels, y, x)
+                input_data = input_seq.permute(1, 0, 2, 3)  # (channels, seq_len, y, x)
+        
+        else: # For training (original logic where input and output tensors are same original length)
+              # idx here goes from 0 to (total_time_of_input_tensor - seq_len)
+            if self.seq_len == 1:
+                input_data = self.input_tensors[idx].unsqueeze(1)  # (channels, 1, y, x)
+                output_data = self.output_tensors[idx]  # (output_channels, y, x)
+            else:
+                # start_idx_in_tensors is the starting point in the original long tensor for this sample's input sequence
+                start_idx_in_tensors = idx 
+                end_idx_for_input_seq = start_idx_in_tensors + self.seq_len
+                
+                input_seq = self.input_tensors[start_idx_in_tensors:end_idx_for_input_seq]  # (seq_len, channels, y, x)
+                input_data = input_seq.permute(1, 0, 2, 3)  # (channels, seq_len, y, x)
+                # Output is the last element of the corresponding sequence in output_tensors
+                output_data = self.output_tensors[end_idx_for_input_seq - 1] 
+        
         # Grok gaussian noise
-        if self.training:
+        if self.training: # This self.training check is for applying noise only during training
             input_data += torch.randn_like(input_data) * 0.01
         return input_data, output_data
 
@@ -203,55 +244,90 @@ class ClimateEmulationDataModule(LightningDataModule):
     def setup(self, stage: str | None = None):
         log.info(f"Setting up data module for stage: {stage} from {self.hparams.path}")
 
+        history_needed = 0
+        if self.hparams.seq_len > 1:
+            history_needed = self.hparams.seq_len - 1
+
         with xr.open_zarr(self.hparams.path, consolidated=True, chunks={"time": 24}) as ds:
             spatial_template_da = ds["rsdt"].isel(time=0, ssp=0, drop=True)
 
             train_inputs_dask_list, train_outputs_dask_list = [], []
-            val_input_dask, val_output_dask = None, None
-            val_ssp = "ssp370"
+            
+            val_ssp_name = "ssp370" # Explicitly define val_ssp for clarity
             val_months = 120
+            
+            ssp370_input_for_val_hist = None # To store ssp370 input for validation history
+            ssp370_output_for_val = None # To store ssp370 output for validation
 
             log.info(f"Loading data from SSPs: {self.hparams.train_ssps}")
-            for ssp in self.hparams.train_ssps:
+            for ssp_name in self.hparams.train_ssps:
                 ssp_input_dask, ssp_output_dask = _load_process_ssp_data(
                     ds,
-                    ssp,
+                    ssp_name,
                     self.hparams.input_vars,
                     self.hparams.output_vars,
                     self.hparams.target_member_id,
                     spatial_template_da,
                 )
 
-                if ssp == val_ssp:
-                    val_input_dask = ssp_input_dask[-val_months:]
-                    val_output_dask = ssp_output_dask[-val_months:]
+                if ssp_name == val_ssp_name:
+                    # Store full ssp370 data to later slice for validation with history
+                    ssp370_input_for_val_hist = ssp_input_dask
+                    ssp370_output_for_val = ssp_output_dask
+                    
+                    # Add the part of ssp370 *not* used for validation to training
+                    # This part does not need explicit pre-padding for history for ClimateDataset(training=True)
                     train_inputs_dask_list.append(ssp_input_dask[:-val_months])
                     train_outputs_dask_list.append(ssp_output_dask[:-val_months])
                 else:
+                    # Other SSPs go entirely to training
                     train_inputs_dask_list.append(ssp_input_dask)
                     train_outputs_dask_list.append(ssp_output_dask)
+            
+            if ssp370_input_for_val_hist is None or ssp370_output_for_val is None:
+                # This case should ideally not happen if val_ssp_name is in train_ssps
+                # If val_ssp is not in train_ssps, we need to load it separately.
+                log.warning(f"Validation SSP {val_ssp_name} not found in train_ssps. Loading it separately.")
+                ssp370_input_for_val_hist, ssp370_output_for_val = _load_process_ssp_data(
+                    ds, val_ssp_name, self.hparams.input_vars, self.hparams.output_vars, 
+                    self.hparams.target_member_id, spatial_template_da
+                )
 
+            # Concatenate training data
             train_input_dask = da.concatenate(train_inputs_dask_list, axis=0)
             train_output_dask = da.concatenate(train_outputs_dask_list, axis=0)
 
-            # Compute normalization statistics
+            # Prepare validation data from the stored/loaded ssp370 data
+            val_output_dask_unnorm = ssp370_output_for_val[-val_months:]
+            val_input_len_for_slicing = val_months + history_needed
+            
+            if ssp370_input_for_val_hist.shape[0] < val_input_len_for_slicing:
+                raise ValueError(
+                    f"Full {val_ssp_name} data ({ssp370_input_for_val_hist.shape[0]} months) too short for val_months ({val_months}) + history ({history_needed}). "
+                    f"Required: {val_input_len_for_slicing}."
+                )
+            val_input_slice_start = -val_input_len_for_slicing
+            val_input_dask_unnorm = ssp370_input_for_val_hist[val_input_slice_start:None]
+
+            # Compute normalization statistics using only training data
             input_mean = da.nanmean(train_input_dask, axis=(0, 2, 3), keepdims=True).compute()
             input_std = da.nanstd(train_input_dask, axis=(0, 2, 3), keepdims=True).compute()
-            # Avoid division by zero for seasonal channels (sin_month, cos_month)
-            input_std = np.where(input_std == 0, 1.0, input_std)  # Set std=1 for constant channels
+            input_std = np.where(input_std == 0, 1.0, input_std)
             output_mean = da.nanmean(train_output_dask, axis=(0, 2, 3), keepdims=True).compute()
             output_std = da.nanstd(train_output_dask, axis=(0, 2, 3), keepdims=True).compute()
 
             self.normalizer.set_input_statistics(mean=input_mean, std=input_std)
             self.normalizer.set_output_statistics(mean=output_mean, std=output_std)
 
+            # Normalize datasets
             train_input_norm_dask = self.normalizer.normalize(train_input_dask, data_type="input")
             train_output_norm_dask = self.normalizer.normalize(train_output_dask, data_type="output")
+            
+            val_input_norm_dask = self.normalizer.normalize(val_input_dask_unnorm, data_type="input")
+            val_output_norm_dask = self.normalizer.normalize(val_output_dask_unnorm, data_type="output")
 
-            val_input_norm_dask = self.normalizer.normalize(val_input_dask, data_type="input")
-            val_output_norm_dask = self.normalizer.normalize(val_output_dask, data_type="output")
-
-            full_test_input_dask, full_test_output_dask = _load_process_ssp_data(
+            # --- Test Data Preparation ---
+            full_test_input_dask_ssp, full_test_output_dask_ssp = _load_process_ssp_data(
                 ds,
                 self.hparams.test_ssp,
                 self.hparams.input_vars,
@@ -260,20 +336,58 @@ class ClimateEmulationDataModule(LightningDataModule):
                 spatial_template_da,
             )
 
-            test_slice = slice(-self.hparams.test_months, None)
-            sliced_test_input_dask = full_test_input_dask[test_slice]
-            sliced_test_output_raw_dask = full_test_output_dask[test_slice]
+            # Determine history needed for inputs
+            history_needed = 0
+            if self.hparams.seq_len > 1:
+                history_needed = self.hparams.seq_len - 1
+            
+            # Slice for output data (target 360 months)
+            test_output_slice = slice(-self.hparams.test_months, None)
+            output_for_dataset_dask = full_test_output_dask_ssp[test_output_slice]
 
-            test_input_norm_dask = self.normalizer.normalize(sliced_test_input_dask, data_type="input")
-            test_output_raw_dask = sliced_test_output_raw_dask
+            # Slice for input data (target 360 months + history)
+            test_input_len_for_slicing = self.hparams.test_months + history_needed
+            if full_test_input_dask_ssp.shape[0] < test_input_len_for_slicing:
+                raise ValueError(
+                    f"Full test SSP ({self.hparams.test_ssp}) data too short for test_months ({self.hparams.test_months}) + history ({history_needed}). "
+                    f"Required: {test_input_len_for_slicing}, Available: {full_test_input_dask_ssp.shape[0]}"
+                )
+            test_input_slice_start = -test_input_len_for_slicing
+            input_for_dataset_dask = full_test_input_dask_ssp[test_input_slice_start:None]
+            
+            # Normalize the (potentially longer) input sequence for the test set
+            test_input_norm_dask = self.normalizer.normalize(input_for_dataset_dask, data_type="input")
+            # Test output is raw (not normalized by the dataset)
+            test_output_raw_dask = output_for_dataset_dask
+            # --- End Test Data Preparation ---
 
-        self.train_dataset = ClimateDataset(train_input_norm_dask, train_output_norm_dask, seq_len=self.hparams.seq_len, output_is_normalized=True)
-        self.train_dataset.training = True
-        self.val_dataset = ClimateDataset(val_input_norm_dask, val_output_norm_dask, seq_len=self.hparams.seq_len, output_is_normalized=True)
-        self.test_dataset = ClimateDataset(test_input_norm_dask, test_output_raw_dask, seq_len=self.hparams.seq_len, output_is_normalized=False)
-
+        self.train_dataset = ClimateDataset(
+            train_input_norm_dask, 
+            train_output_norm_dask, 
+            seq_len=self.hparams.seq_len, 
+            output_is_normalized=True,
+            training=True
+        )
+        self.val_dataset = ClimateDataset(
+            val_input_norm_dask,  # Pre-lengthened
+            val_output_norm_dask, # Original length (e.g. 120 months), normalized
+            seq_len=self.hparams.seq_len, 
+            output_is_normalized=True, # val_output is normalized for loss calculation
+            training=False 
+        )
+        self.test_dataset = ClimateDataset(
+            test_input_norm_dask,  # Length: test_months + seq_len - 1
+            test_output_raw_dask,  # Length: test_months (e.g., 360)
+            seq_len=self.hparams.seq_len,
+            output_is_normalized=False, # Test outputs are raw
+            training=False 
+        )
+        
+        # The log message below might be slightly misleading for train/val if their underlying data isn't pre-lengthened for seq_len > 1
+        # as their effective number of 'getitem' calls that succeed without error for sequences might be less.
+        # However, len(dataset) will report based on output_dask.shape[0].
         log.info(
-            f"Datasets created. Train: {len(self.train_dataset)}, Val: {len(self.val_dataset)} (last months of {val_ssp}), Test: {len(self.test_dataset)}"
+            f"Datasets created. Train: {len(self.train_dataset)}, Val: {len(self.val_dataset)}, Test: {len(self.test_dataset)}"
         )
 
     # Common DataLoader configuration
@@ -545,7 +659,7 @@ class ClimateEmulationModule(pl.LightningModule):
                 optimizer,
                 mode='min',           # Minimize validation loss
                 factor=0.5,           # Reduce LR by half
-                patience=5,           # Wait 5 epochs without improvement
+                patience=10,           # Wait 5 epochs without improvement
                 min_lr=self.hparams.get('min_lr', 1e-5),  # Minimum LR
                 verbose=True          # Print LR changes
             ),
@@ -587,7 +701,7 @@ def main(cfg: DictConfig):
     # Add early stopping callback
     early_stopping_callback = pl.callbacks.EarlyStopping(
         monitor='val/loss',       # Monitor validation loss
-        patience=15,              # Stop after 10 epochs without improvement
+        patience=37,              # Stop after 10 epochs without improvement
         mode='min',               # Minimize the monitored metric
         verbose=True              # Print when stopping
     )

@@ -14,7 +14,7 @@ seed: 42
 use_wandb: true
 wandb_project: "cse-151b-competition"
 wandb_entity: "saem-uc-san-diego"
-run_name: "3dCNN_SepCausal_ks3_idim128_d3_drop0.4_AdamW_RLROP_lr1e-3_wd1e-4_minlr1e-8_schP5_GN0.01_sincos_bs64_seq12_ESP15_epochs150"
+run_name: "3dCNN_SepCausal_ks3_idim256_d4_drop0.4_AdamW_RLROP_lr1e-3_wd1e-4_minlr1e-8_schP5_GN0.01_sincos_bs4_seq12_ESP15_epochs50"
 wandb_group: "andrew_3dCNN"
 
 # Path to a checkpoint to load. If set, will load this checkpoint and resume training (evaluation)

@@ -148,10 +148,11 @@ class SimpleCNN(nn.Module):
         
         self.res_blocks = nn.ModuleList()
         current_dim = init_dim
-        dilations = [1, 2, 4][:depth]  # Fewer dilations
+        base_dilation_sequence = [1, 2, 4]  # Define the base sequence of dilations
         
         for i in range(depth):
-            dilation_t = dilations[i]
+            # Select dilation for the current block, cycling through the base sequence
+            dilation_t = base_dilation_sequence[i % len(base_dilation_sequence)]
             out_dim = current_dim  # No doubling
             self.res_blocks.append(
                 ResidualBlock(current_dim, out_dim, kernel_size, stride=1, dilation_t=dilation_t)
