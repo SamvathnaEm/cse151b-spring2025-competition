@@ -17,7 +17,7 @@ except ImportError:
     print("Optuna is not installed. Please install it with 'pip install optuna'")
     sys.exit(1)
 
-def check_database(db_name="optuna_climate.db", study_name="climate_optimization"):
+def check_database(db_name="optuna_fresh.db", study_name="climate_optimization"):
     """Check the Optuna database and show trial information."""
     
     # Check if database file exists
@@ -82,4 +82,4 @@ if __name__ == "__main__":
     parser.add_argument("--study", type=str, default="climate_optimization", help="Optuna study name")
     args = parser.parse_args()
     
-    check_database(db_name=args.db, study_name=args.study) 
+    check_database(study_name=args.study) 

@@ -115,23 +115,23 @@ def run_sweep(n_trials=1, max_epochs=1, db_name="optuna_climate.db", study_name=
     # Parameters to sweep over
     sweep_params = [
         # Data Parameters - For climate, sequence length is particularly important 
-        "data.sequence_length=range(3,24)",  # Climate-relevant timescales (months)
-        "data.batch_size=choice(2,4)",  # Smaller batches to avoid OOM
+        "data.sequence_length=12",  # Climate-relevant timescales (months)
+        "data.batch_size=4",  # Smaller batches to avoid OOM
         
         # LSTM Parameters - For temporal patterns
-        "model.lstm_hidden_dim=range(16,256)",  # Powers of 2 for efficiency
-        "model.n_lstm_layers=range(1,3)",  # Stack depth for temporal processing
-        "model.lstm_dropout=interval(0.05, 0.95)",  # Continuous dropout range
+        "model.lstm_hidden_dim=172",  # Powers of 2 for efficiency
+        "model.n_lstm_layers=1",  # Stack depth for temporal processing
+        "model.lstm_dropout=0.1",  # Continuous dropout range
         
         # CNN Parameters - For spatial patterns
-        "model.cnn_init_dim=range(16,128)",  # Powers of 2 for efficiency
-        "model.cnn_depth=choice(1,2,3)",  # Reduced to avoid OOM
-        "model.cnn_dropout_rate=interval(0.05, 0.95)",  # Continuous dropout
-        "model.cnn_kernel_size=choice(3,5,7)",  # New! Different kernel sizes for spatial context
+        "model.cnn_init_dim=96",  # Powers of 2 for efficiency
+        "model.cnn_depth=1",  # Reduced to avoid OOM
+        "model.cnn_dropout_rate=0.4",  # Continuous dropout
+        "model.cnn_kernel_size=7",  # New! Different kernel sizes for spatial context
         
         # Training Parameters - For log-scale in Hydra, use tags
-        "training.lr=tag(log, interval(1e-6, 1e-2))",  # Log-scale for learning rate using proper Hydra syntax
-        "++training.weight_decay=tag(log, interval(1e-6, 1e-3))", # Added Weight Decay
+        "training.lr=5e-5",  # Log-scale for learning rate using proper Hydra syntax
+        "++training.weight_decay=2.4e-5", # Added Weight Decay
         "++trainer.callbacks.2.patience=choice(3,5,7,9)",  # Early stopping patience
     ]
     
@@ -171,8 +171,8 @@ def run_sweep(n_trials=1, max_epochs=1, db_name="optuna_climate.db", study_name=
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run hyperparameter optimization sweep")
-    parser.add_argument("--trials", type=int, default=77, help="Number of trials to run")
-    parser.add_argument("--epochs", type=int, default=17, help="Maximum epochs per trial")
+    parser.add_argument("--trials", type=int, default=1, help="Number of trials to run")
+    parser.add_argument("--epochs", type=int, default=50, help="Maximum epochs per trial")
     parser.add_argument("--db", type=str, default="optuna_fresh.db", help="Database filename for storing results")
     parser.add_argument("--study", type=str, default="climate_optimization", help="Optuna study name")
     parser.add_argument("--force-new", action="store_true", help="Force creation of a new database, removing existing one")

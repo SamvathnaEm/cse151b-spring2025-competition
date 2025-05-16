@@ -15,7 +15,7 @@ seed: 42
 use_wandb: true
 wandb_project: "cse-151b-competition"
 wandb_entity: "saem-uc-san-diego"
-run_name: "CNNLSTM_s${data.sequence_length}_b${data.batch_size}_L${model.lstm_hidden_dim}x${model.n_lstm_layers}dp${model.lstm_dropout}_C${model.cnn_init_dim}x${model.cnn_depth}k${model.cnn_kernel_size}dp${model.cnn_dropout_rate}_lr${training.lr}_wd${training.weight_decay}_pat${trainer.callbacks.2.patience}"
+run_name: "optuna_CNNLSTM_s${data.sequence_length}_b${data.batch_size}_L${model.lstm_hidden_dim}x${model.n_lstm_layers}dp${model.lstm_dropout}_C${model.cnn_init_dim}x${model.cnn_depth}k${model.cnn_kernel_size}dp${model.cnn_dropout_rate}_lr${training.lr}_wd${training.weight_decay}_pat${trainer.callbacks.2.patience}"
 wandb_group: "Hyperparameter_Sweep"
 
 # Optuna metric to optimize
