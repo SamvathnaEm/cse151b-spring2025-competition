@@ -120,7 +120,7 @@ def run_sweep(n_trials=1, max_epochs=1, db_name="optuna_climate.db", study_name=
         
         # LSTM Parameters - For temporal patterns
         "model.lstm_hidden_dim=128",  # Powers of 2 for efficiency
-        "model.n_lstm_layers=1",  # Stack depth for temporal processing
+        "model.n_lstm_layers=2",  # Stack depth for temporal processing
         "model.lstm_dropout=0.1",  # Continuous dropout range
         
         # CNN Parameters - For spatial patterns
