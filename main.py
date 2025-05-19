@@ -339,7 +339,7 @@ class ClimateEmulationDataModule(LightningDataModule):
 
 # --- PyTorch Lightning Module ---
 class ClimateEmulationModule(pl.LightningModule):
-    def __init__(self, model: nn.Module, learning_rate: float, weight_decay: float = 0.0):
+    def __init__(self, model: nn.Module, learning_rate: float, weight_decay: float = 0.0, lr_scheduler_patience: int = 5, lr_scheduler_factor: float = 0.25):
         super().__init__()
         self.model = model
         self.save_hyperparameters(ignore=["model"])
@@ -652,8 +652,8 @@ class ClimateEmulationModule(pl.LightningModule):
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode='min',      # Reduce LR when the monitored quantity has stopped decreasing
-            factor=0.25,      # Factor by which the learning rate will be reduced. new_lr = lr * factor
-            patience=5,      # Number of epochs with no improvement after which learning rate will be reduced
+            factor=self.hparams.lr_scheduler_factor,      # Factor by which the learning rate will be reduced. new_lr = lr * factor
+            patience=self.hparams.lr_scheduler_patience,      # Number of epochs with no improvement after which learning rate will be reduced
             verbose=True     # If True, prints a message to stdout for each update
         )
         return {
@@ -684,7 +684,9 @@ def main(cfg: DictConfig):
     lightning_module = ClimateEmulationModule(
         model,
         learning_rate=cfg.training.lr,
-        weight_decay=cfg.training.weight_decay
+        weight_decay=cfg.training.weight_decay,
+        lr_scheduler_patience=cfg.training.lr_scheduler_patience,
+        lr_scheduler_factor=cfg.training.lr_scheduler_factor
     )
 
     # Create lightning trainer

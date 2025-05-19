@@ -119,20 +119,22 @@ def run_sweep(n_trials=1, max_epochs=1, db_name="optuna_climate.db", study_name=
         "data.batch_size=4",  # Smaller batches to avoid OOM
         
         # LSTM Parameters - For temporal patterns
-        "model.lstm_hidden_dim=128",  # Powers of 2 for efficiency
+        "model.lstm_hidden_dim=256",  # Powers of 2 for efficiency
         "model.n_lstm_layers=2",  # Stack depth for temporal processing
         "model.lstm_dropout=0.1",  # Continuous dropout range
         
         # CNN Parameters - For spatial patterns
-        "model.cnn_init_dim=96",  # Powers of 2 for efficiency
+        "model.cnn_init_dim=128",  # Powers of 2 for efficiency
         "model.cnn_depth=2",  # Reduced to avoid OOM
-        "model.cnn_dropout_rate=0.4",  # Continuous dropout
         "model.cnn_kernel_size=7",  # New! Different kernel sizes for spatial context
+        "model.cnn_dropout_rate=0.4",  # Continuous dropout
         
         # Training Parameters - For log-scale in Hydra, use tags
         "training.lr=5e-5",  # Log-scale for learning rate using proper Hydra syntax
         "++training.weight_decay=2.4e-5", # Added Weight Decay
-        "++trainer.callbacks.2.patience=choice(3,5,7,9)",  # Early stopping patience
+        "++trainer.callbacks.2.patience=14",  # Early stopping patience
+        "++lr_scheduler_patience=5", # ReduceLROnPlateau patience
+        "++lr_scheduler_factor=0.25"  # ReduceLROnPlateau factor
     ]
     
     # Add sweep parameters to command
@@ -172,7 +174,7 @@ def run_sweep(n_trials=1, max_epochs=1, db_name="optuna_climate.db", study_name=
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run hyperparameter optimization sweep")
     parser.add_argument("--trials", type=int, default=1, help="Number of trials to run")
-    parser.add_argument("--epochs", type=int, default=50, help="Maximum epochs per trial")
+    parser.add_argument("--epochs", type=int, default=75, help="Maximum epochs per trial")
     parser.add_argument("--db", type=str, default="optuna_fresh.db", help="Database filename for storing results")
     parser.add_argument("--study", type=str, default="climate_optimization", help="Optuna study name")
     parser.add_argument("--force-new", action="store_true", help="Force creation of a new database, removing existing one")
