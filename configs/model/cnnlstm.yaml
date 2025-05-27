@@ -7,11 +7,13 @@
     cnn_init_dim: 32
     cnn_depth: 2
     cnn_dropout_rate: 0.5 # Dropout within SimpleCNN's final layers if used standalone
+    cnn_activation_type: silu  # Options: swiglu, geglu, silu
     
     # Parameters for the LSTM
     lstm_hidden_dim: 64 # Example value, tune as needed
     n_lstm_layers: 2     # Example value
     lstm_dropout: 0.5    # Dropout for LSTM layers (if n_lstm_layers > 1)
+    use_attention: true  # Whether to use multi-head attention mechanism
     
     # output_height and output_width are passed by get_model from data config
     # n_input_channels and n_output_channels are also passed by get_model

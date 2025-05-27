@@ -3,7 +3,7 @@
 max_epochs: 20  # Specific number of epochs
 accelerator: auto  # Will be auto-detected in code
 devices: auto  # Will be auto-detected in code
-deterministic: true
+deterministic: false # Due to adaptive_avg_pool2d_backward_cuda_kernel
 num_sanity_val_steps: 0
 precision: 32
 

@@ -8,3 +8,4 @@ kernel_size: 3
 init_dim: 64
 depth: 4
 dropout_rate: 0.2
+activation_type: silu  # Options: swiglu, geglu, silu
