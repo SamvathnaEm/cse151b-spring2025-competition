@@ -27,3 +27,28 @@ batch_size: 8
 num_workers: 4
 output_height: 48   # NEW (or ensure get_model defaults are fine)
 output_width: 72    # NEW (or ensure get_model defaults are fine)
+
+# Data Augmentation Parameters
+augmentation:
+  enabled: false  # Whether to apply data augmentation during training
+  
+  # Gaussian noise augmentation
+  noise:
+    input_std: 0.02    # Standard deviation for input noise (relative to normalized data)
+    output_std: 0.01   # Standard deviation for output noise (relative to normalized data)
+    probability: 0.5   # Probability of applying noise to a sample
+  
+  # Spatial translation augmentation
+  spatial_shift:
+    max_shift_pixels: 2  # Maximum number of pixels to shift in each direction
+    probability: 0.3     # Probability of applying spatial shifts
+    
+  # Temporal jittering (small time offsets within sequences)
+  temporal_jitter:
+    max_offset: 1       # Maximum number of timesteps to offset (±1)
+    probability: 0.3    # Probability of applying temporal jittering
+    
+  # Input scaling augmentation (simulate calibration uncertainty)
+  input_scaling:
+    scale_range: [0.98, 1.02]  # Range of multiplicative scaling factors
+    probability: 0.4           # Probability of applying input scaling

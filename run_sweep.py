@@ -118,16 +118,28 @@ def run_sweep(n_trials=1, max_epochs=1, db_name="optuna_climate.db", study_name=
         "data.sequence_length=12",  # Climate-relevant timescales (months)
         "data.batch_size=4",  # Smaller batches to avoid OOM
         
+        # Augmentation Parameters - New!
+        "data.augmentation.enabled=True",  # Whether to enable augmentation
+        "data.augmentation.noise.input_std=interval(0.005,0.05)",  # Input noise std
+        "data.augmentation.noise.output_std=interval(0.002,0.02)",  # Output noise std
+        "data.augmentation.noise.probability=interval(0.2,0.8)",  # Noise probability
+        "data.augmentation.spatial_shift.max_shift_pixels=choice(1,2,3)",  # Spatial shift pixels
+        "data.augmentation.spatial_shift.probability=interval(0.1,0.5)",  # Spatial shift probability
+        "data.augmentation.temporal_jitter.max_offset=choice(1,2)",  # Temporal jitter offset
+        "data.augmentation.temporal_jitter.probability=interval(0.1,0.5)",  # Temporal jitter probability
+        "data.augmentation.input_scaling.scale_range=[0.95,1.05]",  # Input scaling range (fixed as a list)
+        "data.augmentation.input_scaling.probability=interval(0.2,0.6)",  # Input scaling probability
+        
         # LSTM Parameters - For temporal patterns
         "model.lstm_hidden_dim=256",  # Powers of 2 for efficiency
         "model.n_lstm_layers=2",  # Stack depth for temporal processing
-        "model.lstm_dropout=interval(0.1,0.9)",  # Continuous dropout range
+        "model.lstm_dropout=0.1",  # Continuous dropout range
         
         # CNN Parameters - For spatial patterns
         "model.cnn_init_dim=128",  # Powers of 2 for efficiency
-        "model.cnn_depth=1",  # Reduced to avoid OOM
-        "model.cnn_kernel_size=11",  # New! Different kernel sizes for spatial context
-        "model.cnn_dropout_rate=interval(0.1,0.9)",  # Continuous dropout
+        "model.cnn_depth=2",  # Reduced to avoid OOM
+        "model.cnn_kernel_size=9",  # New! Different kernel sizes for spatial context
+        "model.cnn_dropout_rate=0.4",  # Continuous dropout
         
         # Training Parameters - For log-scale in Hydra, use tags
         "training.lr=5e-5",  # Log-scale for learning rate using proper Hydra syntax
@@ -173,7 +185,7 @@ def run_sweep(n_trials=1, max_epochs=1, db_name="optuna_climate.db", study_name=
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run hyperparameter optimization sweep")
-    parser.add_argument("--trials", type=int, default=5, help="Number of trials to run")
+    parser.add_argument("--trials", type=int, default=1, help="Number of trials to run")
     parser.add_argument("--epochs", type=int, default=150, help="Maximum epochs per trial")
     parser.add_argument("--db", type=str, default="optuna_fresh.db", help="Database filename for storing results")
     parser.add_argument("--study", type=str, default="climate_optimization", help="Optuna study name")

@@ -49,15 +49,19 @@ log = get_logger(__name__)
 # Dataset to precompute all tensors during initialization
 #UPDATED BY GEMINI 2.5-pro-experimental
 class ClimateDataset(Dataset):
-    def __init__(self, inputs_norm_dask, outputs_dask, sequence_length, output_is_normalized=True): # Added sequence_length
+    def __init__(self, inputs_norm_dask, outputs_dask, sequence_length, output_is_normalized=True, augmentation_config=None): # Added augmentation_config
         self.sequence_length = sequence_length # Store sequence_length
         self.output_is_normalized = output_is_normalized
+        self.augmentation_config = augmentation_config or {}
+        self.augmentation_enabled = self.augmentation_config.get('enabled', False)
+        
         # Store dataset size (total number of individual time steps)
         self.total_timesteps = inputs_norm_dask.shape[0]
 
         log.info(
             f"Creating dataset: {self.total_timesteps} total time steps, sequence_length: {self.sequence_length}, "
-            f"input shape (per step): {inputs_norm_dask.shape[1:]}, normalized output: {output_is_normalized}"
+            f"input shape (per step): {inputs_norm_dask.shape[1:]}, normalized output: {output_is_normalized}, "
+            f"augmentation enabled: {self.augmentation_enabled}"
         )
 
         # Precompute all tensors in one go
@@ -74,14 +78,96 @@ class ClimateDataset(Dataset):
         # Number of possible start points for a sequence
         return self.total_timesteps - self.sequence_length + 1
 
+    def _apply_augmentations(self, input_seq, output_seq):
+        """Apply data augmentations to input and output sequences."""
+        if not self.augmentation_enabled:
+            return input_seq, output_seq
+            
+        # Apply augmentations probabilistically
+        aug_config = self.augmentation_config
+        
+        # 1. Gaussian noise augmentation
+        if 'noise' in aug_config and torch.rand(1).item() < aug_config['noise'].get('probability', 0.0):
+            noise_config = aug_config['noise']
+            if noise_config.get('input_std', 0) > 0:
+                input_noise = torch.randn_like(input_seq) * noise_config['input_std']
+                input_seq = input_seq + input_noise
+            
+            if self.output_is_normalized and noise_config.get('output_std', 0) > 0:
+                output_noise = torch.randn_like(output_seq) * noise_config['output_std']
+                output_seq = output_seq + output_noise
+        
+        # 2. Spatial translation augmentation
+        if 'spatial_shift' in aug_config and torch.rand(1).item() < aug_config['spatial_shift'].get('probability', 0.0):
+            shift_config = aug_config['spatial_shift']
+            max_shift = shift_config.get('max_shift_pixels', 0)
+            if max_shift > 0:
+                # Generate random shifts
+                shift_h = torch.randint(-max_shift, max_shift + 1, (1,)).item()
+                shift_w = torch.randint(-max_shift, max_shift + 1, (1,)).item()
+                
+                # Apply shifts with zero padding
+                if shift_h != 0 or shift_w != 0:
+                    input_seq = self._apply_spatial_shift(input_seq, shift_h, shift_w)
+                    output_seq = self._apply_spatial_shift(output_seq, shift_h, shift_w)
+        
+        # 3. Input scaling augmentation
+        if 'input_scaling' in aug_config and torch.rand(1).item() < aug_config['input_scaling'].get('probability', 0.0):
+            scaling_config = aug_config['input_scaling']
+            scale_range = scaling_config.get('scale_range', [1.0, 1.0])
+            if len(scale_range) == 2 and scale_range[0] != scale_range[1]:
+                scale_factor = torch.rand(1).item() * (scale_range[1] - scale_range[0]) + scale_range[0]
+                input_seq = input_seq * scale_factor
+        
+        return input_seq, output_seq
+    
+    def _apply_spatial_shift(self, tensor, shift_h, shift_w):
+        """Apply spatial shift with zero padding."""
+        seq_len, channels, height, width = tensor.shape
+        shifted_tensor = torch.zeros_like(tensor)
+        
+        # Calculate source and target slices
+        src_h_start = max(0, -shift_h)
+        src_h_end = min(height, height - shift_h)
+        src_w_start = max(0, -shift_w)
+        src_w_end = min(width, width - shift_w)
+        
+        tgt_h_start = max(0, shift_h)
+        tgt_h_end = tgt_h_start + (src_h_end - src_h_start)
+        tgt_w_start = max(0, shift_w)
+        tgt_w_end = tgt_w_start + (src_w_end - src_w_start)
+        
+        # Copy the shifted data
+        if src_h_end > src_h_start and src_w_end > src_w_start:
+            shifted_tensor[:, :, tgt_h_start:tgt_h_end, tgt_w_start:tgt_w_end] = \
+                tensor[:, :, src_h_start:src_h_end, src_w_start:src_w_end]
+        
+        return shifted_tensor
+
     def __getitem__(self, idx):
         # idx is the starting point of the sequence
         start_idx = idx
-        end_idx = idx + self.sequence_length
+        
+        # Apply temporal jittering if enabled
+        if (self.augmentation_enabled and 'temporal_jitter' in self.augmentation_config and 
+            torch.rand(1).item() < self.augmentation_config['temporal_jitter'].get('probability', 0.0)):
+            
+            jitter_config = self.augmentation_config['temporal_jitter']
+            max_offset = jitter_config.get('max_offset', 0)
+            if max_offset > 0:
+                # Calculate available jitter range
+                min_start = max(0, start_idx - max_offset)
+                max_start = min(self.total_timesteps - self.sequence_length, start_idx + max_offset)
+                start_idx = torch.randint(min_start, max_start + 1, (1,)).item()
+        
+        end_idx = start_idx + self.sequence_length
 
         # Get sequences of inputs and outputs
         input_seq = self.input_tensors[start_idx:end_idx]     # (seq_len, C_in, H, W)
         output_seq = self.output_tensors[start_idx:end_idx]   # (seq_len, C_out, H, W)
+        
+        # Apply augmentations
+        input_seq, output_seq = self._apply_augmentations(input_seq, output_seq)
         
         return input_seq, output_seq
 
@@ -160,11 +246,15 @@ class ClimateEmulationDataModule(LightningDataModule):
         seed: int = 42,
         output_height: int | None = None,
         output_width: int | None = None,
+        augmentation: dict = None,  # Added augmentation config
     ):
         super().__init__()
         self.save_hyperparameters()
         self.hparams.path = to_absolute_path(path)
         self.normalizer = Normalizer()
+        
+        # Store augmentation config (defaults to disabled if not provided)
+        self.augmentation_config = augmentation or {'enabled': False}
 
         # Set evaluation batch size to training batch size if not specified
         if eval_batch_size is None:
@@ -263,18 +353,24 @@ class ClimateEmulationDataModule(LightningDataModule):
             test_input_norm_dask = self.normalizer.normalize(sliced_test_input_dask, data_type="input")
             test_output_raw_dask = sliced_test_output_raw_dask  # Keep unnormed for evaluation
 
-        # Create datasets, passing sequence_length
+        # Create datasets, passing sequence_length and augmentation config
+        # Only enable augmentation for training dataset
+        train_augmentation = self.augmentation_config if self.augmentation_config.get('enabled', False) else None
+        
         self.train_dataset = ClimateDataset(
             train_input_norm_dask, train_output_norm_dask, 
-            self.hparams.sequence_length, output_is_normalized=True
+            self.hparams.sequence_length, output_is_normalized=True,
+            augmentation_config=train_augmentation  # Enable augmentation only for training
         )
         self.val_dataset = ClimateDataset(
             val_input_norm_dask, val_output_norm_dask, 
-            self.hparams.sequence_length, output_is_normalized=True
+            self.hparams.sequence_length, output_is_normalized=True,
+            augmentation_config=None  # No augmentation for validation
         )
         self.test_dataset = ClimateDataset(
             test_input_norm_dask, test_output_raw_dask, 
-            self.hparams.sequence_length, output_is_normalized=False
+            self.hparams.sequence_length, output_is_normalized=False,
+            augmentation_config=None  # No augmentation for testing
         )
 
         # Log dataset sizes in a single message
