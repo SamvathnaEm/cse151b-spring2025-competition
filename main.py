@@ -339,11 +339,31 @@ class ClimateEmulationDataModule(LightningDataModule):
 
 # --- PyTorch Lightning Module ---
 class ClimateEmulationModule(pl.LightningModule):
-    def __init__(self, model: nn.Module, learning_rate: float, weight_decay: float = 0.0, lr_scheduler_patience: int = 5, lr_scheduler_factor: float = 0.25):
+    def __init__(
+        self, 
+        model: nn.Module, 
+        learning_rate: float, 
+        weight_decay: float = 0.0, 
+        lr_scheduler_patience: int = 5, 
+        lr_scheduler_factor: float = 0.25,
+        lr_scheduler_min_lr: float = 1e-6,
+        optimizer: str = "adam",
+        gradient_clip_val: float = None,
+        label_smoothing: float = 0.0,
+    ):
         super().__init__()
         self.model = model
         self.save_hyperparameters(ignore=["model"])
-        self.criterion = nn.MSELoss()
+        
+        # Loss function with optional label smoothing
+        if label_smoothing > 0.0:
+            # For regression, we can use a smoothed MSE by adding noise
+            self.criterion = nn.MSELoss()
+            self.label_smoothing = label_smoothing
+        else:
+            self.criterion = nn.MSELoss()
+            self.label_smoothing = 0.0
+            
         self.normalizer = None
         # Store evaluation outputs for time-mean calculation
         self.test_step_outputs = []
@@ -366,11 +386,18 @@ class ClimateEmulationModule(pl.LightningModule):
         
         batch_size, seq_len, c_out, h, w = y_pred_norm_seq.shape
         
+        # Apply label smoothing for regularization if enabled
+        if self.label_smoothing > 0.0:
+            # Add small random noise to targets for smoothing effect in regression
+            noise = torch.randn_like(y_true_norm_seq) * self.label_smoothing * 0.1
+            y_true_norm_seq = y_true_norm_seq + noise
+        
         # Reshape for loss calculation: (B*S, C_out, H, W)
         loss = self.criterion(
             y_pred_norm_seq.reshape(batch_size * seq_len, c_out, h, w),
             y_true_norm_seq.reshape(batch_size * seq_len, c_out, h, w)
         )
+        
         # Log with batch_size representing number of sequences
         self.log("train/loss", loss, prog_bar=True, batch_size=batch_size) 
         return loss
@@ -644,16 +671,32 @@ class ClimateEmulationModule(pl.LightningModule):
         log.info(f"Kaggle submission saved to {filepath}")
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(
-            self.parameters(),
-            lr=self.hparams.learning_rate,
-            weight_decay=self.hparams.weight_decay
-        )
+        # Choose optimizer based on configuration
+        if self.hparams.optimizer.lower() == "adamw":
+            optimizer = optim.AdamW(
+                self.parameters(),
+                lr=self.hparams.learning_rate,
+                weight_decay=self.hparams.weight_decay
+            )
+        elif self.hparams.optimizer.lower() == "rmsprop":
+            optimizer = optim.RMSprop(
+                self.parameters(),
+                lr=self.hparams.learning_rate,
+                weight_decay=self.hparams.weight_decay
+            )
+        else:  # Default to Adam
+            optimizer = optim.Adam(
+                self.parameters(),
+                lr=self.hparams.learning_rate,
+                weight_decay=self.hparams.weight_decay
+            )
+            
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode='min',      # Reduce LR when the monitored quantity has stopped decreasing
             factor=self.hparams.lr_scheduler_factor,      # Factor by which the learning rate will be reduced. new_lr = lr * factor
             patience=self.hparams.lr_scheduler_patience,      # Number of epochs with no improvement after which learning rate will be reduced
+            min_lr=self.hparams.lr_scheduler_min_lr,       # Minimum learning rate
             verbose=True     # If True, prints a message to stdout for each update
         )
         return {
@@ -686,7 +729,11 @@ def main(cfg: DictConfig):
         learning_rate=cfg.training.lr,
         weight_decay=cfg.training.weight_decay,
         lr_scheduler_patience=cfg.training.lr_scheduler_patience,
-        lr_scheduler_factor=cfg.training.lr_scheduler_factor
+        lr_scheduler_factor=cfg.training.lr_scheduler_factor,
+        lr_scheduler_min_lr=cfg.training.lr_scheduler_min_lr,
+        optimizer=cfg.training.optimizer,
+        gradient_clip_val=cfg.training.gradient_clip_val,
+        label_smoothing=cfg.training.label_smoothing,
     )
 
     # Create lightning trainer

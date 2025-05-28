@@ -133,6 +133,12 @@ def get_trainer_config(cfg: DictConfig, model=None) -> Dict[str, Any]:
     trainer_config = OmegaConf.to_container(cfg.trainer)
     trainer_config["logger"] = logger
 
+    # Add gradient clipping if specified
+    if hasattr(cfg.training, 'gradient_clip_val') and cfg.training.gradient_clip_val is not None:
+        # Treat values >= 5.0 as "no clipping" since we can't use null in Optuna choices
+        if cfg.training.gradient_clip_val < 5.0:
+            trainer_config["gradient_clip_val"] = cfg.training.gradient_clip_val
+
     # Check if GPU was requested but not available
     if trainer_config.get("accelerator") == "gpu" and not torch.cuda.is_available():
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():

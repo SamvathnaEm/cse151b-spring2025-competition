@@ -14,6 +14,12 @@
     n_lstm_layers: 2     # Example value
     lstm_dropout: 0.5    # Dropout for LSTM layers (if n_lstm_layers > 1)
     use_attention: true  # Whether to use multi-head attention mechanism
+    attention_heads: 8   # Number of attention heads when use_attention=true
+    bidirectional: false # Whether to use bidirectional LSTM
+    
+    # Advanced architecture parameters
+    adaptive_pool_size: 4      # Size for adaptive pooling (sweepable)
+    feature_projection_factor: 1.0  # Scaling factor for feature projection (sweepable)
     
     # output_height and output_width are passed by get_model from data config
     # n_input_channels and n_output_channels are also passed by get_model

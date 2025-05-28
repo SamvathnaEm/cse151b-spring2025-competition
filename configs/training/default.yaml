@@ -1,6 +1,17 @@
 # @package _global_.training
 
+# Basic training parameters
 lr: 5e-4
 weight_decay: 0.0001
+
+# Scheduler parameters
 lr_scheduler_patience: 5 # Default patience for ReduceLROnPlateau
 lr_scheduler_factor: 0.25  # Default factor for ReduceLROnPlateau
+lr_scheduler_min_lr: 1e-6  # Minimum learning rate
+
+# Optimizer choice
+optimizer: adam  # Options: adam, adamw, rmsprop
+
+# Advanced training techniques
+gradient_clip_val: null  # No gradient clipping by default
+label_smoothing: 0.0     # No label smoothing by default

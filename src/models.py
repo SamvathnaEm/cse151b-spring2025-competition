@@ -243,12 +243,18 @@ class CNNLSTM(nn.Module):
         n_lstm_layers=2,
         lstm_dropout=0.2,
         use_attention=False,  # Option to add attention mechanism
+        attention_heads=8,  # Number of attention heads
+        bidirectional=False,  # Whether to use bidirectional LSTM
+        adaptive_pool_size=4,  # Size for adaptive pooling
+        feature_projection_factor=1.0,  # Scaling factor for feature projection
     ):
         super().__init__()
         self.n_output_channels = n_output_channels
         self.output_height = output_height
         self.output_width = output_width
         self.use_attention = use_attention
+        self.bidirectional = bidirectional
+        self.adaptive_pool_size = adaptive_pool_size
 
         self.cnn = SimpleCNN(
             n_input_channels=n_input_channels,
@@ -263,12 +269,18 @@ class CNNLSTM(nn.Module):
         cnn_feature_channels = self.cnn.feature_dim_after_res_blocks
 
         # Use adaptive pooling to get fixed-size features
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((4, 4))  # Increased from (1,1) for richer spatial info
-        pooled_feature_size = cnn_feature_channels * 4 * 4
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((adaptive_pool_size, adaptive_pool_size))
+        pooled_feature_size = cnn_feature_channels * adaptive_pool_size * adaptive_pool_size
+        
+        # Compute projected feature size with scaling factor
+        projected_feature_size = int(lstm_hidden_dim * feature_projection_factor)
         
         # Optional: Add a projection layer to reduce dimensionality
         self.feature_projection = nn.Sequential(
-            nn.Linear(pooled_feature_size, lstm_hidden_dim),
+            nn.Linear(pooled_feature_size, projected_feature_size),
+            nn.SiLU(),
+            nn.Dropout(cnn_dropout_rate),
+            nn.Linear(projected_feature_size, lstm_hidden_dim),  # Project to LSTM input size
             nn.SiLU(),
             nn.Dropout(cnn_dropout_rate)
         )
@@ -279,25 +291,34 @@ class CNNLSTM(nn.Module):
             num_layers=n_lstm_layers,
             batch_first=True,
             dropout=lstm_dropout if n_lstm_layers > 1 else 0.0,
-            bidirectional=False
+            bidirectional=bidirectional
         )
+        
+        # Adjust LSTM output size if bidirectional
+        lstm_output_dim = lstm_hidden_dim * 2 if bidirectional else lstm_hidden_dim
         
         # Optional attention mechanism for better temporal modeling
         if use_attention:
             self.attention = nn.MultiheadAttention(
-                embed_dim=lstm_hidden_dim,
-                num_heads=8,
+                embed_dim=lstm_output_dim,
+                num_heads=attention_heads,
                 dropout=lstm_dropout,
                 batch_first=True
             )
         
-        # Enhanced decoder with multiple layers
+        # Enhanced decoder with multiple layers and residual connections
         self.fc_decoder = nn.Sequential(
-            nn.Linear(lstm_hidden_dim, lstm_hidden_dim * 2),
+            nn.Linear(lstm_output_dim, lstm_output_dim * 2),
             nn.SiLU(),
             nn.Dropout(lstm_dropout),
-            nn.Linear(lstm_hidden_dim * 2, n_output_channels * output_height * output_width)
+            nn.Linear(lstm_output_dim * 2, lstm_output_dim * 2),
+            nn.SiLU(), 
+            nn.Dropout(lstm_dropout),
+            nn.Linear(lstm_output_dim * 2, n_output_channels * output_height * output_width)
         )
+        
+        # Add a residual projection for better gradient flow
+        self.residual_projection = nn.Linear(lstm_output_dim, n_output_channels * output_height * output_width)
         
         # Initialize weights
         self._initialize_weights()
@@ -311,9 +332,16 @@ class CNNLSTM(nn.Module):
                 nn.init.orthogonal_(param.data)
             elif 'bias' in name:
                 param.data.fill_(0)
-                # Set forget gate bias to 1
+                # Set forget gate bias to 1 for better gradient flow
                 n = param.size(0)
                 param.data[(n//4):(n//2)].fill_(1)
+        
+        # Initialize linear layers with proper initialization for SiLU
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
 
     def forward(self, x, h_0=None, c_0=None):
         batch_size, seq_len, C_in, H_in, W_in = x.shape
@@ -340,11 +368,17 @@ class CNNLSTM(nn.Module):
         if self.use_attention:
             lstm_out, _ = self.attention(lstm_out, lstm_out, lstm_out)
         
-        # Decode to output format
+        # Decode to output format with residual connection
         decoder_input = lstm_out.reshape(batch_size * seq_len, -1)
+        
+        # Main decoder path
         decoded_output = self.fc_decoder(decoder_input)
         
-        output = decoded_output.view(
+        # Residual connection - add direct projection of LSTM output
+        residual_output = self.residual_projection(decoder_input)
+        final_output = decoded_output + residual_output
+        
+        output = final_output.view(
             batch_size, seq_len, self.n_output_channels, self.output_height, self.output_width
         )
         
