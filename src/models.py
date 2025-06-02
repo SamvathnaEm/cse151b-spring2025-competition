@@ -245,7 +245,7 @@ class CNNLSTM(nn.Module):
         use_attention=False,  # Option to add attention mechanism
         attention_heads=8,  # Number of attention heads
         bidirectional=False,  # Whether to use bidirectional LSTM
-        adaptive_pool_size=4,  # Size for adaptive pooling
+        adaptive_pool_size=4,  # Size for pooling (now deterministic)
         feature_projection_factor=1.0,  # Scaling factor for feature projection
     ):
         super().__init__()
@@ -268,9 +268,41 @@ class CNNLSTM(nn.Module):
         
         cnn_feature_channels = self.cnn.feature_dim_after_res_blocks
 
-        # Use adaptive pooling to get fixed-size features
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((adaptive_pool_size, adaptive_pool_size))
-        pooled_feature_size = cnn_feature_channels * adaptive_pool_size * adaptive_pool_size
+        # Use deterministic pooling instead of adaptive pooling
+        # Calculate the appropriate kernel sizes and strides for deterministic pooling
+        # Assuming the CNN output maintains the same spatial dimensions as input (48x72)
+        input_h, input_w = 48, 72  # Known from data config
+        target_h, target_w = adaptive_pool_size, adaptive_pool_size
+        
+        # Calculate kernel sizes and strides for deterministic pooling
+        # We'll use average pooling with calculated kernel sizes
+        kernel_h = input_h // target_h
+        kernel_w = input_w // target_w
+        stride_h = kernel_h
+        stride_w = kernel_w
+        
+        # Handle any remainder by adjusting the kernel size slightly
+        if input_h % target_h != 0:
+            kernel_h = input_h // target_h + 1
+            stride_h = input_h // target_h
+        if input_w % target_w != 0:
+            kernel_w = input_w // target_w + 1
+            stride_w = input_w // target_w
+            
+        self.deterministic_pool = nn.AvgPool2d(
+            kernel_size=(kernel_h, kernel_w),
+            stride=(stride_h, stride_w),
+            padding=0
+        )
+        
+        # Calculate the actual output size after pooling (might be slightly different from target)
+        pooled_h = (input_h - kernel_h) // stride_h + 1
+        pooled_w = (input_w - kernel_w) // stride_w + 1
+        pooled_feature_size = cnn_feature_channels * pooled_h * pooled_w
+        
+        # Store actual pooled dimensions for debugging
+        self.pooled_h = pooled_h
+        self.pooled_w = pooled_w
         
         # Compute projected feature size with scaling factor
         projected_feature_size = int(lstm_hidden_dim * feature_projection_factor)
@@ -350,8 +382,8 @@ class CNNLSTM(nn.Module):
         cnn_input = x.reshape(batch_size * seq_len, C_in, H_in, W_in)
         cnn_features = self.cnn.extract_features(cnn_input)
         
-        # Pool and project features
-        pooled_features = self.adaptive_pool(cnn_features)
+        # Pool and project features using deterministic pooling
+        pooled_features = self.deterministic_pool(cnn_features)
         pooled_features = pooled_features.reshape(batch_size * seq_len, -1)
         projected_features = self.feature_projection(pooled_features)
         

@@ -119,15 +119,15 @@ def run_sweep(n_trials=1, max_epochs=1, db_name="optuna_climate.db", study_name=
         "data.batch_size=4",  # DEFAULT: 4 - Reduced max to avoid OOM
         
         # LSTM Parameters - For temporal patterns
-        "model.lstm_hidden_dim=256",  # DEFAULT: 256 - Reduced max to avoid OOM
+        "model.lstm_hidden_dim=237",  # DEFAULT: 256 - Reduced max to avoid OOM
         "model.n_lstm_layers=2",  # DEFAULT: 2 - Reduced max to avoid OOM
         "model.lstm_dropout=0.1",  # DEFAULT: 0.1 - Continuous dropout range
         "model.bidirectional=false",  # DEFAULT: false - Bidirectional vs unidirectional LSTM
         
         # CNN Parameters - For spatial patterns
         "model.cnn_init_dim=128",  # DEFAULT: 128 - Reduced max to avoid OOM
-        "model.cnn_depth=2",  # DEFAULT: 2 - Reduced max to avoid OOM
-        "model.cnn_kernel_size=9",  # DEFAULT: 9 - Different kernel sizes for spatial context
+        "model.cnn_depth=3",  # DEFAULT: 2 - Reduced max to avoid OOM
+        "model.cnn_kernel_size=7",  # DEFAULT: 9 - Different kernel sizes for spatial context
         "model.cnn_dropout_rate=0.4",  # DEFAULT: 0.4 - Continuous dropout
         
         # Activation Function - Based on your finding that SiLU works better
@@ -135,20 +135,20 @@ def run_sweep(n_trials=1, max_epochs=1, db_name="optuna_climate.db", study_name=
         
         # Attention Mechanism Parameters
         "model.use_attention=true",  # DEFAULT: true - Whether to use attention
-        "model.attention_heads=8",  # DEFAULT: 8 - Reduced max to avoid OOM
+        "model.attention_heads=3",  # DEFAULT: 8 - Reduced max to avoid OOM
         
         # Training Parameters - Log-scale for learning rate and weight decay
-        "training.lr=5e-5",  # DEFAULT: 5e-5 - Log-scale for learning rate
+        "training.lr=1e-4",  # DEFAULT: 5e-5 - Log-scale for learning rate
         "++training.weight_decay=2.4e-5", # DEFAULT: 2.4e-5 - Log-scale weight decay
         
         # Advanced Training Parameters
         "++training.gradient_clip_val=5",  # DEFAULT: null (no clipping) - Values >=5.0 = no clipping
         "++training.optimizer=adam",  # DEFAULT: adam - Optimizer choice
-        "++training.label_smoothing=0.0",  # DEFAULT: 0.0 - Label smoothing for robustness
+        "++training.label_smoothing=0.00",  # DEFAULT: 0.0 - Label smoothing for robustness
         
         # Scheduler Parameters
-        "++lr_scheduler_patience=7", # DEFAULT: 7 - ReduceLROnPlateau patience
-        "++lr_scheduler_factor=0.25",  # DEFAULT: 0.25 - ReduceLROnPlateau factor
+        "++lr_scheduler_patience=3", # DEFAULT: 7 - ReduceLROnPlateau patience
+        "++lr_scheduler_factor=0.5",  # DEFAULT: 0.25 - ReduceLROnPlateau factor
         "++lr_scheduler_min_lr=1e-9",  # DEFAULT: 1e-6 - Minimum learning rate
         
         # Early Stopping
@@ -156,12 +156,12 @@ def run_sweep(n_trials=1, max_epochs=1, db_name="optuna_climate.db", study_name=
         "++trainer.callbacks.2.min_delta=1e-5",  # DEFAULT: N/A - Early stopping min delta
         
         # Mixed Precision and Hardware Optimization
-        "++trainer.precision=choice(16-mixed,32)",  # DEFAULT: 32 - Mixed precision training
-        "++trainer.accumulate_grad_batches=choice(1,2)",  # DEFAULT: 1 - Reduced max to avoid OOM
+        "++trainer.precision=32",  # DEFAULT: 32 - Mixed precision training
+        "++trainer.accumulate_grad_batches=1",  # DEFAULT: 1 - Reduced max to avoid OOM
         
         # Model Architecture Variations
-        "++model.adaptive_pool_size=4",  # DEFAULT: 4 - Reduced max to avoid OOM
-        "++model.feature_projection_factor=1.0",  # DEFAULT: 1.0 - Reduced max to avoid OOM
+        "++model.adaptive_pool_size=2",  # DEFAULT: 4 - Deterministic pooling size
+        "++model.feature_projection_factor=2",  # DEFAULT: 1.0 - Reduced max to avoid OOM
     ]
     
     # Add sweep parameters to command
@@ -201,8 +201,8 @@ def run_sweep(n_trials=1, max_epochs=1, db_name="optuna_climate.db", study_name=
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run hyperparameter optimization sweep")
     parser.add_argument("--trials", type=int, default=1, help="Number of trials to run")
-    parser.add_argument("--epochs", type=int, default=150, help="Maximum epochs per trial")
-    parser.add_argument("--db", type=str, default="optuna_enhanced_fresh.db", help="Database filename for storing results")
+    parser.add_argument("--epochs", type=int, default=250, help="Maximum epochs per trial")
+    parser.add_argument("--db", type=str, default="TEMP.db", help="Database filename for storing results")
     parser.add_argument("--study", type=str, default="climate_optimization", help="Optuna study name")
     parser.add_argument("--force-new", action="store_true", help="Force creation of a new database, removing existing one")
     args = parser.parse_args()

@@ -18,7 +18,7 @@
     bidirectional: false # Whether to use bidirectional LSTM
     
     # Advanced architecture parameters
-    adaptive_pool_size: 4      # Size for adaptive pooling (sweepable)
+    adaptive_pool_size: 4      # Size for deterministic pooling (sweepable)
     feature_projection_factor: 1.0  # Scaling factor for feature projection (sweepable)
     
     # output_height and output_width are passed by get_model from data config
